@@ -1,0 +1,45 @@
+{
+  "_animpipe": {
+    "note": "STARTING POINT — adapt to your installed nodes. First-Last-Frame to Video (transition node A -> node B). Recommended real setup: Wan 2.2 I2V / FLF2V or LTX-Video with start_image as frame 0 and end_image as the final frame condition; the model interpolates plausible motion between the two keyframes. The graph below is a minimal placeholder showing the two image inputs + the patch map your real workflow must expose. Replace node ids/class_types to match your FLF2V workflow, then keep this patch map in sync.",
+    "patch": {
+      "start_image": ["1", "image"],
+      "end_image": ["2", "image"],
+      "positive": ["10", "text"],
+      "negative": ["11", "text"],
+      "seed": ["3", "seed"],
+      "frames": ["5", "length"],
+      "width": ["5", "width"],
+      "height": ["5", "height"],
+      "fps": ["6", "frame_rate"]
+    }
+  },
+  "1": { "class_type": "LoadImage", "inputs": { "image": "start.png" } },
+  "2": { "class_type": "LoadImage", "inputs": { "image": "end.png" } },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": { "ckpt_name": "wan_i2v.safetensors" }
+  },
+  "10": { "class_type": "CLIPTextEncode", "inputs": { "text": "transition", "clip": ["4", 1] } },
+  "11": { "class_type": "CLIPTextEncode", "inputs": { "text": "low quality", "clip": ["4", 1] } },
+  "5": {
+    "class_type": "EmptyHunyuanLatentVideo",
+    "inputs": { "width": 768, "height": 768, "length": 25, "batch_size": 1 },
+    "_comment": "Placeholder latent node — swap for your FLF2V conditioning node that consumes both LoadImage inputs (1=first, 2=last)."
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0, "steps": 24, "cfg": 6.0, "sampler_name": "euler",
+      "scheduler": "normal", "denoise": 1.0,
+      "model": ["4", 0], "positive": ["10", 0], "negative": ["11", 0], "latent_image": ["5", 0]
+    }
+  },
+  "7": { "class_type": "VAEDecode", "inputs": { "samples": ["3", 0], "vae": ["4", 2] } },
+  "6": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["7", 0], "frame_rate": 12, "loop_count": 0,
+      "filename_prefix": "animpipe_flf2v", "format": "video/h264-mp4"
+    }
+  }
+}

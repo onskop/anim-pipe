@@ -1,0 +1,50 @@
+{
+  "_animpipe": {
+    "note": "STARTING POINT — adapt to your installed nodes. Seamless idle loop from a single keyframe (breathing/scratching back to the SAME node). Recommended real setup: AnimateDiff-Evolved with closed_loop=true + IPAdapter from the start image, OR an image-to-video model (SVD / Wan 2.2 I2V). For true seamlessness, condition the start image as BOTH first and last frame (DreamLoop technique). The shipped graph below is an SVD img2vid skeleton; replace with your loop workflow and update the patch map.",
+    "patch": {
+      "start_image": ["1", "image"],
+      "seed": ["3", "seed"],
+      "frames": ["2", "video_frames"],
+      "fps": ["2", "fps"],
+      "motion_scale": ["2", "motion_bucket_id"],
+      "width": ["2", "width"],
+      "height": ["2", "height"],
+      "fps_out": ["6", "frame_rate"]
+    }
+  },
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "start.png" }
+  },
+  "4": {
+    "class_type": "ImageOnlyCheckpointLoader",
+    "inputs": { "ckpt_name": "svd_xt.safetensors" }
+  },
+  "2": {
+    "class_type": "SVD_img2vid_Conditioning",
+    "inputs": {
+      "width": 768, "height": 768, "video_frames": 25, "fps": 12,
+      "motion_bucket_id": 80, "augmentation_level": 0.0,
+      "clip_vision": ["4", 1], "init_image": ["1", 0], "vae": ["4", 2]
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 0, "steps": 20, "cfg": 2.5, "sampler_name": "euler",
+      "scheduler": "karras", "denoise": 1.0,
+      "model": ["4", 0], "positive": ["2", 0], "negative": ["2", 1], "latent_image": ["2", 2]
+    }
+  },
+  "5": {
+    "class_type": "VAEDecode",
+    "inputs": { "samples": ["3", 0], "vae": ["4", 2] }
+  },
+  "6": {
+    "class_type": "VHS_VideoCombine",
+    "inputs": {
+      "images": ["5", 0], "frame_rate": 12, "loop_count": 0,
+      "filename_prefix": "animpipe_loop", "format": "image/gif", "pingpong": true
+    }
+  }
+}
