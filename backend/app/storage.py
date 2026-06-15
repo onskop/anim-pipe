@@ -37,6 +37,17 @@ def read_bytes(rel: str) -> bytes:
     return abs_path(rel).read_bytes()
 
 
+def remove_file(rel: str | None) -> None:
+    """Best-effort unlink of a stored file. Caller must ensure it's unreferenced
+    (content-addressed paths can be shared by dedup'd assets)."""
+    if not rel:
+        return
+    try:
+        abs_path(rel).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def make_thumb(rel_source: str, max_px: int = 256) -> str | None:
     """Create a PNG thumbnail for an image or the first frame of a GIF."""
     src = abs_path(rel_source)

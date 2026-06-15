@@ -85,6 +85,9 @@ async def _run_image(db: Session, job: GenerationJob) -> None:
     ch = _char_for_node(db, node)
     ctx = _character_ctx(db, node)
     positive, negative = build_image_prompt(node.prompt, ctx)
+    # Append the node's own negatives to the sensible defaults (if any).
+    if node.negative_prompt and node.negative_prompt.strip():
+        negative = f"{negative}, {node.negative_prompt.strip()}"
     p = job.params or {}
     provider = get_image_provider()
     refs = _ref_bytes(db, ch)
@@ -148,8 +151,11 @@ async def _run_upscale(db: Session, job: GenerationJob) -> None:
     provider = get_upscale_provider()
     if parent.kind != "image":
         raise ValueError("upscale currently supports image assets")
+    from .config import get_settings
+    model = p.get("upscale_model") or (get_settings().upscale_model or None)
     gen = await provider.upscale(
-        UpscaleRequest(image=storage.read_bytes(parent.path), scale=p.get("scale", 2))
+        UpscaleRequest(image=storage.read_bytes(parent.path), scale=p.get("scale", 2),
+                       model=model)
     )
     new = _persist(db, job, parent.owner_type or "node", parent.owner_id or "",
                    gen, role="upscaled", parent_id=parent.id)

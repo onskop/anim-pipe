@@ -23,6 +23,9 @@ data/
 .env.*
 !.env.example
 
+# Backend reload sentinel (touched by POST /api/restart)
+backend/app/_reload_sentinel.py
+
 # OS / editor
 .DS_Store
 .idea/

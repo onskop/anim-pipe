@@ -85,3 +85,34 @@ export interface ProviderStatus {
   comfyui_url: string;
   openrouter_configured: boolean;
 }
+
+export interface Settings {
+  image_provider: string;
+  video_provider: string;
+  upscale_provider: string;
+  llm_provider: string;
+  comfyui_url: string;
+  upscale_model: string;
+  openrouter_base_url: string;
+  openrouter_api_key: string;
+  llm_text_model: string;
+  llm_vision_model: string;
+  default_candidates: number;
+}
+
+export interface ComfyModels {
+  online: boolean;
+  error: string | null;
+  checkpoints: string[];
+  upscale_models: string[];
+  samplers: string[];
+  schedulers: string[];
+}
+
+export interface TestLLMResult {
+  ok: boolean;
+  provider: string;
+  model: string;
+  sample: string;
+  error: string;
+}

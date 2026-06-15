@@ -8,15 +8,17 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import queue, storage
+from . import queue, runtime, storage
 from .config import get_settings
 from .db import get_db
 from .models import Asset, Character, Edge, GenerationJob, Node, Project
 from .providers import get_llm_provider
+from .providers import comfyui as comfyui_provider
 from .schemas import (
-    AssetOut, CharacterIn, CharacterOut, EdgeIn, EdgeOut, ExpandRequest,
+    AssetOut, CharacterIn, CharacterOut, ComfyModels, EdgeIn, EdgeOut, ExpandRequest,
     GenerateRequest, GraphOut, JobOut, NodeIn, NodeOut, ProjectCreate,
-    ProjectOut, ProviderStatus, ScenarioRequest, TriageUpdate,
+    ProjectOut, ProviderStatus, ScenarioRequest, SettingsOut, SettingsPatch,
+    TestLLMResult, TriageUpdate,
 )
 
 router = APIRouter(prefix="/api")
@@ -56,6 +58,58 @@ def providers_status():
         llm=s.llm_provider, comfyui_url=s.comfyui_url,
         openrouter_configured=bool(s.openrouter_api_key),
     )
+
+
+# --- settings (runtime-editable) --------------------------------------
+def _settings_out() -> SettingsOut:
+    s = get_settings()
+    return SettingsOut(
+        image_provider=s.image_provider, video_provider=s.video_provider,
+        upscale_provider=s.upscale_provider, llm_provider=s.llm_provider,
+        comfyui_url=s.comfyui_url, upscale_model=s.upscale_model,
+        openrouter_base_url=s.openrouter_base_url, openrouter_api_key=s.openrouter_api_key,
+        llm_text_model=s.llm_text_model, llm_vision_model=s.llm_vision_model,
+        default_candidates=s.default_candidates,
+    )
+
+
+@router.get("/settings", response_model=SettingsOut)
+def get_settings_route():
+    return _settings_out()
+
+
+@router.patch("/settings", response_model=SettingsOut)
+def update_settings_route(body: SettingsPatch):
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    runtime.update(patch)
+    return _settings_out()
+
+
+@router.post("/settings/test-llm", response_model=TestLLMResult)
+async def test_llm():
+    s = get_settings()
+    try:
+        sample = await get_llm_provider().expand_prompt("a brave knight by a campfire")
+        return TestLLMResult(ok=True, provider=s.llm_provider, model=s.llm_text_model,
+                             sample=sample[:300])
+    except Exception as exc:  # noqa: BLE001
+        return TestLLMResult(ok=False, provider=s.llm_provider, model=s.llm_text_model,
+                             error=str(exc))
+
+
+@router.get("/comfyui/models", response_model=ComfyModels)
+async def comfyui_models():
+    return ComfyModels(**await comfyui_provider.list_models())
+
+
+@router.post("/restart")
+async def restart_backend():
+    """Trigger a reload by touching a sentinel module. Requires the server to be
+    run with ``uvicorn --reload`` (the documented dev launch)."""
+    import time
+    sentinel = __import__("pathlib").Path(__file__).parent / "_reload_sentinel.py"
+    sentinel.write_text(f"# touched {time.time()}\n")
+    return {"ok": True, "note": "reload triggered if running with --reload"}
 
 
 # --- projects ----------------------------------------------------------
@@ -223,6 +277,35 @@ def triage_asset(aid: str, body: TriageUpdate, db: Session = Depends(get_db)):
     a.status = body.status
     db.commit()
     return a
+
+
+@router.delete("/assets/{aid}")
+def delete_asset(aid: str, db: Session = Depends(get_db)):
+    """Hard-delete a candidate: drop the DB row, clear any references to it, and
+    remove the file if no other asset still points at the same content."""
+    a = _get(db, Asset, aid)
+    path, thumb = a.path, a.thumb_path
+    # Detach references so we don't leave dangling FKs.
+    for n in db.execute(select(Node).where(Node.selected_asset_id == aid)).scalars():
+        n.selected_asset_id = None
+    for e in db.execute(
+        select(Edge).where((Edge.selected_asset_id == aid) | (Edge.motion_mask_id == aid))
+    ).scalars():
+        if e.selected_asset_id == aid:
+            e.selected_asset_id = None
+        if e.motion_mask_id == aid:
+            e.motion_mask_id = None
+    for child in db.execute(select(Asset).where(Asset.parent_asset_id == aid)).scalars():
+        child.parent_asset_id = None
+    db.delete(a)
+    db.commit()
+    # Remove files only if no surviving asset shares the same content-addressed path.
+    for rel in (path, thumb):
+        if rel and not db.execute(
+            select(Asset.id).where((Asset.path == rel) | (Asset.thumb_path == rel)).limit(1)
+        ).first():
+            storage.remove_file(rel)
+    return {"ok": True}
 
 
 @router.post("/nodes/{nid}/select/{aid}", response_model=NodeOut)

@@ -65,6 +65,19 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: v
 .cand .meta { padding: 6px 8px; font-size: 11px; }
 .cand .actions { display: flex; gap: 4px; padding: 6px 8px; }
 .cand .actions button { flex: 1; padding: 4px; font-size: 11px; }
+/* character editor */
+.charbox { margin-top: 10px; padding: 10px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--panel2); }
+
+/* settings */
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.banner { margin-top: 12px; padding: 12px; border: 1px solid var(--bad);
+  border-radius: 8px; background: rgba(224,85,107,.08); display: flex;
+  flex-direction: column; gap: 8px; }
+.cmd { display: block; padding: 8px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; font-family: ui-monospace, monospace; font-size: 11px;
+  word-break: break-all; }
+
 .score { font-size: 11px; color: var(--muted); }
 .bar { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; margin-top: 4px; }
 .bar > span { display: block; height: 100%; background: var(--good); }

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from . import queue
+from . import queue, runtime
 from .api import router
 from .db import init_db
 
@@ -20,6 +20,7 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    runtime.apply_to_settings()  # layer data/runtime.json over .env defaults
     init_db()
     queue.start_workers()
     queue.requeue_pending()

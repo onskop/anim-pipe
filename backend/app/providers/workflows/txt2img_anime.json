@@ -14,7 +14,7 @@
   },
   "4": {
     "class_type": "CheckpointLoaderSimple",
-    "inputs": { "ckpt_name": "anime_model.safetensors" }
+    "inputs": { "ckpt_name": "DreamShaper_8_pruned.safetensors" }
   },
   "5": {
     "class_type": "EmptyLatentImage",

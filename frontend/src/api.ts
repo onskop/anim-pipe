@@ -1,5 +1,6 @@
 import type {
-  Asset, Character, GEdge, GNode, Graph, Job, Project, ProviderStatus,
+  Asset, Character, ComfyModels, GEdge, GNode, Graph, Job, Project,
+  ProviderStatus, Settings, TestLLMResult,
 } from "./types";
 
 const BASE = "/api";
@@ -41,6 +42,8 @@ export const api = {
 
   createCharacter: (pid: string, body: Partial<Character>) =>
     j<Character>(`/projects/${pid}/characters`, { method: "POST", body: JSON.stringify(body) }),
+  updateCharacter: (cid: string, body: Partial<Character>) =>
+    j<Character>(`/characters/${cid}`, { method: "PUT", body: JSON.stringify(body) }),
 
   generateNode: (id: string, n: number, params = {}) =>
     j<Job>(`/nodes/${id}/generate`, { method: "POST", body: JSON.stringify({ n, params }) }),
@@ -56,10 +59,27 @@ export const api = {
     j<GNode>(`/nodes/${nid}/select/${aid}`, { method: "POST" }),
   selectEdgeAsset: (eid: string, aid: string) =>
     j<GEdge>(`/edges/${eid}/select/${aid}`, { method: "POST" }),
-  upscale: (aid: string, scale = 2) =>
-    j<Job>(`/assets/${aid}/upscale`, { method: "POST", body: JSON.stringify({ params: { scale } }) }),
+  upscale: (aid: string, params: Record<string, unknown> = { scale: 2 }) =>
+    j<Job>(`/assets/${aid}/upscale`, { method: "POST", body: JSON.stringify({ params }) }),
   score: (aid: string) => j<Asset>(`/assets/${aid}/score`, { method: "POST" }),
+  deleteAsset: (aid: string) => j(`/assets/${aid}`, { method: "DELETE" }),
 
   expand: (brief: string, context = "") =>
     j<{ prompt: string }>("/llm/expand", { method: "POST", body: JSON.stringify({ brief, context }) }),
+
+  // settings / control
+  settings: () => j<Settings>("/settings"),
+  updateSettings: (patch: Partial<Settings>) =>
+    j<Settings>("/settings", { method: "PATCH", body: JSON.stringify(patch) }),
+  testLLM: () => j<TestLLMResult>("/settings/test-llm", { method: "POST" }),
+  comfyModels: () => j<ComfyModels>("/comfyui/models"),
+  restart: () => j<{ ok: boolean }>("/restart", { method: "POST" }),
+  health: async () => {
+    try {
+      const r = await fetch(BASE + "/health");
+      return r.ok;
+    } catch {
+      return false;
+    }
+  },
 };

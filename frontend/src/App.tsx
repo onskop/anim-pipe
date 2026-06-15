@@ -3,6 +3,7 @@ import { ReactFlowProvider } from "reactflow";
 import { api } from "./api";
 import GraphCanvas from "./GraphCanvas";
 import Inspector from "./Inspector";
+import Settings from "./Settings";
 import TriageGallery from "./TriageGallery";
 import { useStore } from "./store";
 import type { Project, ProviderStatus } from "./types";
@@ -12,12 +13,14 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [scenario, setScenario] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
 
   const loadProjects = async () => setProjects(await api.listProjects());
+  const loadProviders = () => api.providers().then(setProviders).catch(() => setProviders(null));
 
   useEffect(() => {
     loadProjects();
-    api.providers().then(setProviders);
+    loadProviders();
   }, []);
 
   const newProject = async () => {
@@ -56,7 +59,10 @@ export default function App() {
       <div className="sidebar">
         <div className="row" style={{ justifyContent: "space-between" }}>
           <strong>anim-pipe</strong>
-          <button onClick={newProject}>+ New</button>
+          <div className="row" style={{ flex: "0 0 auto", gap: 6 }}>
+            <button onClick={() => setShowSettings(true)} title="Settings">⚙</button>
+            <button onClick={newProject}>+ New</button>
+          </div>
         </div>
 
         <h2>Projects</h2>
@@ -97,9 +103,13 @@ export default function App() {
 
         {providers && (
           <>
-            <h2>Backends</h2>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2 style={{ margin: "14px 0 6px" }}>Backends</h2>
+              <button style={{ flex: "0 0 auto" }} onClick={() => setShowSettings(true)}>edit</button>
+            </div>
             <div className="muted stack" style={{ gap: 2 }}>
               <div>image: <span className="tag">{providers.image}</span></div>
+              <div>upscale: <span className="tag">{providers.upscale}</span></div>
               <div>video: <span className="tag">{providers.video}</span></div>
               <div>llm: <span className="tag">{providers.llm}</span></div>
               <div>comfyui: {providers.comfyui_url}</div>
@@ -123,6 +133,9 @@ export default function App() {
 
       <Inspector />
       <TriageGallery />
+      {showSettings && (
+        <Settings onClose={() => setShowSettings(false)} onSaved={loadProviders} />
+      )}
     </div>
   );
 }

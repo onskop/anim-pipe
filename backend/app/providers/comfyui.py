@@ -41,6 +41,53 @@ class ComfyUIError(RuntimeError):
     pass
 
 
+def _combo_options(spec: Any) -> list[str]:
+    """ComfyUI exposes COMBO inputs as either ``[[opt, ...], {meta}]`` (classic)
+    or ``["COMBO", {"options": [...]}]`` (newer). Normalise both to a list."""
+    if not isinstance(spec, list) or not spec:
+        return []
+    first = spec[0]
+    if isinstance(first, list):
+        return [str(x) for x in first]
+    if isinstance(first, str):  # "COMBO"
+        meta = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+        return [str(x) for x in meta.get("options", [])]
+    return []
+
+
+async def list_models(base_url: str | None = None) -> dict[str, Any]:
+    """Query a running ComfyUI for installed checkpoints / upscale models /
+    samplers. Returns ``{"online": bool, "error": str|None, ...lists}``."""
+    url = (base_url or get_settings().comfyui_url).rstrip("/")
+    out: dict[str, Any] = {
+        "online": False, "error": None,
+        "checkpoints": [], "upscale_models": [], "samplers": [], "schedulers": [],
+    }
+
+    async def _opts(http: httpx.AsyncClient, node: str, field: str) -> list[str]:
+        r = await http.get(f"{url}/object_info/{node}")
+        r.raise_for_status()
+        spec = r.json()[node]["input"]["required"][field]
+        return _combo_options(spec)
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            out["checkpoints"] = await _opts(http, "CheckpointLoaderSimple", "ckpt_name")
+            try:
+                out["upscale_models"] = await _opts(http, "UpscaleModelLoader", "model_name")
+            except Exception:
+                pass  # node may be absent
+            try:
+                out["samplers"] = await _opts(http, "KSampler", "sampler_name")
+                out["schedulers"] = await _opts(http, "KSampler", "scheduler")
+            except Exception:
+                pass
+            out["online"] = True
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)
+    return out
+
+
 class ComfyUIProvider:
     def __init__(self, base_url: str | None = None):
         self.base_url = (base_url or get_settings().comfyui_url).rstrip("/")
@@ -112,7 +159,10 @@ class ComfyUIProvider:
             if req.image is None:
                 raise ComfyUIError("comfyui upscale currently supports images only")
             name = await self._upload(http, req.image, "in.png")
-            self._apply(wf, mapping, {"image": name, "scale": req.scale})
+            patch: dict[str, Any] = {"image": name, "scale": req.scale}
+            if req.model:
+                patch["model_name"] = req.model
+            self._apply(wf, mapping, patch)
             data, ext, mime = await self._run(http, wf)
         return GenAsset(data=data, ext=ext, mime=mime, params={"model": "comfyui-upscale"})
 

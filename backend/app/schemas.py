@@ -164,3 +164,49 @@ class ProviderStatus(BaseModel):
     llm: str
     comfyui_url: str
     openrouter_configured: bool
+
+
+# --- Settings (runtime-editable) --------------------------------------
+class SettingsOut(BaseModel):
+    image_provider: str
+    video_provider: str
+    upscale_provider: str
+    llm_provider: str
+    comfyui_url: str
+    upscale_model: str
+    openrouter_base_url: str
+    openrouter_api_key: str  # local single-user tool; shown so it's editable
+    llm_text_model: str
+    llm_vision_model: str
+    default_candidates: int
+
+
+class SettingsPatch(BaseModel):
+    image_provider: str | None = None
+    video_provider: str | None = None
+    upscale_provider: str | None = None
+    llm_provider: str | None = None
+    comfyui_url: str | None = None
+    upscale_model: str | None = None
+    openrouter_base_url: str | None = None
+    openrouter_api_key: str | None = None
+    llm_text_model: str | None = None
+    llm_vision_model: str | None = None
+    default_candidates: int | None = None
+
+
+class TestLLMResult(BaseModel):
+    ok: bool
+    provider: str
+    model: str
+    sample: str = ""
+    error: str = ""
+
+
+class ComfyModels(BaseModel):
+    online: bool
+    error: str | None = None
+    checkpoints: list[str] = Field(default_factory=list)
+    upscale_models: list[str] = Field(default_factory=list)
+    samplers: list[str] = Field(default_factory=list)
+    schedulers: list[str] = Field(default_factory=list)

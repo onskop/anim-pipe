@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     # --- ComfyUI (local GPU) --------------------------------------------
     comfyui_url: str = Field(default="http://127.0.0.1:8188")
+    # Default ESRGAN model name for upscaling (must exist in ComfyUI
+    # models/upscale_models). Empty -> the upscale workflow's own default.
+    upscale_model: str = Field(default="")
 
     # --- OpenRouter (swappable "intelligence" line) ---------------------
     openrouter_api_key: str = Field(default="")
