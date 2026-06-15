@@ -104,6 +104,7 @@ export interface ComfyModels {
   online: boolean;
   error: string | null;
   checkpoints: string[];
+  loras: string[];
   upscale_models: string[];
   samplers: string[];
   schedulers: string[];

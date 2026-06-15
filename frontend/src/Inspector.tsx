@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, fileUrl } from "./api";
 import { useStore } from "./store";
 import type { ComfyModels, GEdge, GNode, Job } from "./types";
 
@@ -34,6 +34,14 @@ export default function Inspector() {
   const [charName, setCharName] = useState("");
   const [charDesc, setCharDesc] = useState("");
   const [charSaved, setCharSaved] = useState(false);
+  // Consistency stack: LoRA + IP-Adapter reference images.
+  const [loraName, setLoraName] = useState("");
+  const [loraWeight, setLoraWeight] = useState(0.8);
+  const [ipWeight, setIpWeight] = useState(0.6);
+  const [refIds, setRefIds] = useState<string[]>([]);
+  const [refThumbs, setRefThumbs] = useState<Record<string, string>>({});
+  const [uploadingRef, setUploadingRef] = useState(false);
+  const refInputRef = useRef<HTMLInputElement>(null);
   const [comfy, setComfy] = useState<ComfyModels | null>(null);
   const [imageProvider, setImageProvider] = useState("mock");
   const [gp, setGp] = useState<GenParams>(DEFAULT_PARAMS);
@@ -54,6 +62,18 @@ export default function Inspector() {
   useEffect(() => {
     setCharName(character?.name ?? "");
     setCharDesc(character?.description ?? "");
+    setLoraName(character?.lora_name ?? "");
+    setLoraWeight(character?.lora_weight ?? 0.8);
+    setIpWeight(character?.ip_adapter_weight ?? 0.6);
+    const ids = character?.ref_image_ids ?? [];
+    setRefIds(ids);
+    // Resolve each reference id to a thumbnail URL for preview.
+    setRefThumbs({});
+    ids.forEach((id) =>
+      api.asset(id)
+        .then((a) => setRefThumbs((m) => ({ ...m, [id]: fileUrl(a.thumb_path || a.path) })))
+        .catch(() => {})
+    );
   }, [character?.id]);
 
   // Refresh provider + ComfyUI model list when the panel is shown / selection changes.
@@ -86,19 +106,40 @@ export default function Inspector() {
     setTimeout(() => setSavedFlag(false), 1200);
   };
 
-  const saveCharacter = async () => {
+  const saveCharacter = async (overrides: Partial<{ ref_image_ids: string[] }> = {}) => {
     if (!character) return;
     await api.updateCharacter(character.id, {
       name: charName,
       description: charDesc,
-      ref_image_ids: character.ref_image_ids,
-      lora_name: character.lora_name,
-      lora_weight: character.lora_weight,
-      ip_adapter_weight: character.ip_adapter_weight,
+      ref_image_ids: overrides.ref_image_ids ?? refIds,
+      lora_name: loraName || null,
+      lora_weight: loraWeight,
+      ip_adapter_weight: ipWeight,
     });
     await refresh();
     setCharSaved(true);
     setTimeout(() => setCharSaved(false), 1200);
+  };
+
+  const addRefImage = async (file: File) => {
+    if (!character || !graph) return;
+    setUploadingRef(true);
+    try {
+      const asset = await api.uploadAsset(graph.project.id, file);
+      const next = [...refIds, asset.id];
+      setRefIds(next);
+      setRefThumbs((m) => ({ ...m, [asset.id]: fileUrl(asset.thumb_path || asset.path) }));
+      await saveCharacter({ ref_image_ids: next });
+    } finally {
+      setUploadingRef(false);
+      if (refInputRef.current) refInputRef.current.value = "";
+    }
+  };
+
+  const removeRefImage = async (id: string) => {
+    const next = refIds.filter((x) => x !== id);
+    setRefIds(next);
+    await saveCharacter({ ref_image_ids: next });
   };
 
   const generate = async () => {
@@ -155,7 +196,87 @@ export default function Inspector() {
               </label>
               <textarea rows={3} value={charDesc} placeholder="green cloak, short brown hair…"
                 onChange={(e) => setCharDesc(e.target.value)} />
-              <button style={{ marginTop: 6 }} onClick={saveCharacter}>
+
+              <div className="muted" style={{ fontSize: 11, margin: "10px 0 4px" }}>
+                <strong>Consistency stack</strong> (ComfyUI) — pin identity beyond
+                the text anchor.
+              </div>
+
+              <label className="muted">character LoRA</label>
+              {isComfy && comfy?.online && comfy.loras.length > 0 ? (
+                <select value={loraName} onChange={(e) => setLoraName(e.target.value)}>
+                  <option value="">— none —</option>
+                  {comfy.loras.map((l) => (
+                    <option key={l} value={l}>{l}</option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={loraName}
+                  placeholder={isComfy ? "no LoRAs found in ComfyUI" : "switch image provider to ComfyUI"}
+                  onChange={(e) => setLoraName(e.target.value)}
+                />
+              )}
+              {loraName && (
+                <>
+                  <label className="muted" style={{ display: "block", marginTop: 6 }}>
+                    LoRA weight · {loraWeight.toFixed(2)}
+                  </label>
+                  <input type="range" min={0} max={1.5} step={0.05} value={loraWeight}
+                    onChange={(e) => setLoraWeight(+e.target.value)} />
+                </>
+              )}
+
+              <label className="muted" style={{ display: "block", marginTop: 8 }}>
+                reference images (IP-Adapter)
+              </label>
+              <div className="row" style={{ flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                {refIds.map((id) => (
+                  <div key={id} style={{ position: "relative" }}>
+                    {refThumbs[id] ? (
+                      <img src={refThumbs[id]} alt="ref"
+                        style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 4 }} />
+                    ) : (
+                      <div style={{ width: 52, height: 52, borderRadius: 4, background: "#0003" }} />
+                    )}
+                    <button
+                      title="remove"
+                      onClick={() => removeRefImage(id)}
+                      style={{
+                        position: "absolute", top: -6, right: -6, width: 18, height: 18,
+                        padding: 0, lineHeight: "16px", borderRadius: 9, fontSize: 11,
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+                <button disabled={uploadingRef} onClick={() => refInputRef.current?.click()}
+                  style={{ width: 52, height: 52, fontSize: 20 }}>
+                  {uploadingRef ? "…" : "+"}
+                </button>
+              </div>
+              <input
+                ref={refInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) addRefImage(f);
+                }}
+              />
+              {refIds.length > 0 && (
+                <>
+                  <label className="muted" style={{ display: "block", marginTop: 6 }}>
+                    IP-Adapter weight · {ipWeight.toFixed(2)}
+                  </label>
+                  <input type="range" min={0} max={1} step={0.05} value={ipWeight}
+                    onChange={(e) => setIpWeight(+e.target.value)} />
+                </>
+              )}
+
+              <button style={{ marginTop: 8 }} onClick={() => saveCharacter()}>
                 {charSaved ? "Saved ✓" : "Save character"}
               </button>
             </div>

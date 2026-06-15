@@ -1,8 +1,12 @@
 {
   "_animpipe": {
-    "note": "Standard SD txt2img. Wire 'checkpoint' to an anime model (e.g. an Illustrious/Pony/AnimagineXL checkpoint). To add character LoRA + IP-Adapter for consistency, insert LoraLoader / IPAdapter nodes in the ComfyUI editor, re-export API JSON, and extend the patch map below.",
+    "note": "SD txt2img with optional character-consistency stack: LoraLoader (10) + IP-Adapter (11 unified loader, 12 ref image, 13 advanced apply). The 'optional' map lets the adapter splice those nodes OUT when a character provides no LoRA / no reference image, so the same template works with or without consistency. Wire 'checkpoint' to an anime model (Illustrious/Pony/AnimagineXL). IP-Adapter nodes require the ComfyUI_IPAdapter_plus custom pack; rebuild in the editor and re-export API JSON if your node names differ.",
     "patch": {
       "checkpoint": ["4", "ckpt_name"],
+      "lora_name": ["10", "lora_name"],
+      "lora_weight": ["10", "strength_model"],
+      "ref_image": ["12", "image"],
+      "ip_weight": ["13", "weight"],
       "positive": ["6", "text"],
       "negative": ["7", "text"],
       "seed": ["3", "seed"],
@@ -10,11 +14,27 @@
       "cfg": ["3", "cfg"],
       "width": ["5", "width"],
       "height": ["5", "height"]
+    },
+    "optional": {
+      "10": { "requires": "lora_name", "passthrough": { "0": ["4", 0], "1": ["4", 1] } },
+      "11": { "requires": "ref_image", "passthrough": { "0": ["10", 0] } },
+      "12": { "requires": "ref_image", "passthrough": {} },
+      "13": { "requires": "ref_image", "passthrough": { "0": ["11", 0] } }
     }
   },
   "4": {
     "class_type": "CheckpointLoaderSimple",
     "inputs": { "ckpt_name": "DreamShaper_8_pruned.safetensors" }
+  },
+  "10": {
+    "class_type": "LoraLoader",
+    "inputs": {
+      "lora_name": "None",
+      "strength_model": 0.8,
+      "strength_clip": 1.0,
+      "model": ["4", 0],
+      "clip": ["4", 1]
+    }
   },
   "5": {
     "class_type": "EmptyLatentImage",
@@ -22,18 +42,40 @@
   },
   "6": {
     "class_type": "CLIPTextEncode",
-    "inputs": { "text": "placeholder positive", "clip": ["4", 1] }
+    "inputs": { "text": "placeholder positive", "clip": ["10", 1] }
   },
   "7": {
     "class_type": "CLIPTextEncode",
-    "inputs": { "text": "placeholder negative", "clip": ["4", 1] }
+    "inputs": { "text": "placeholder negative", "clip": ["10", 1] }
+  },
+  "11": {
+    "class_type": "IPAdapterUnifiedLoader",
+    "inputs": { "preset": "PLUS (high strength)", "model": ["10", 0] }
+  },
+  "12": {
+    "class_type": "LoadImage",
+    "inputs": { "image": "ref.png" }
+  },
+  "13": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "weight": 0.6,
+      "weight_type": "linear",
+      "combine_embeds": "concat",
+      "start_at": 0.0,
+      "end_at": 1.0,
+      "embeds_scaling": "V only",
+      "model": ["11", 0],
+      "ipadapter": ["11", 1],
+      "image": ["12", 0]
+    }
   },
   "3": {
     "class_type": "KSampler",
     "inputs": {
       "seed": 0, "steps": 28, "cfg": 6.5, "sampler_name": "euler",
       "scheduler": "normal", "denoise": 1.0,
-      "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]
+      "model": ["13", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]
     }
   },
   "8": {

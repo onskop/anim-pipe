@@ -134,9 +134,12 @@ Done:
 - [x] Settings UI: live provider swap, OpenRouter config + test, ComfyUI URL, backend health/restart.
 - [x] Character editor (consistency anchor) + node negative prompt wired.
 - [x] Triage: batch AI-score + sort by score; reject hard-deletes.
+- [x] **Character consistency: LoRA + IP-Adapter** wired into the txt2img workflow + UI. The
+  workflow always ships the LoRA/IP-Adapter nodes; the adapter splices them out per-candidate
+  when a character supplies neither, so the same template runs with or without the stack. The
+  character editor exposes a LoRA picker (from ComfyUI), reference-image upload, and weights.
 
 Next:
-- [ ] **Character consistency: LoRA + IP-Adapter wired into the txt2img workflow + UI** (top priority).
 - [ ] Real ESRGAN upscale (install model → flip provider; passthrough already wired).
 - [ ] Video workflows (AnimateDiff loops / Wan·LTX transitions) — rebuild the placeholder graphs, ideally on a rented GPU.
 - [ ] Auto-shortlist top N after scoring; regenerate-with-tweaks from a candidate (lineage exists).
