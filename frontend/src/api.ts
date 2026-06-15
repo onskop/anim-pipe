@@ -53,6 +53,17 @@ export const api = {
 
   assets: (ownerType: "node" | "edge", id: string) =>
     j<Asset[]>(`/${ownerType}/${id}/assets`),
+  asset: (aid: string) => j<Asset>(`/assets/${aid}`),
+  uploadAsset: async (pid: string, file: File, kind = "image"): Promise<Asset> => {
+    const form = new FormData();
+    form.append("file", file);
+    const r = await fetch(`${BASE}/projects/${pid}/upload?kind=${kind}`, {
+      method: "POST",
+      body: form,
+    });
+    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+    return r.json() as Promise<Asset>;
+  },
   triage: (id: string, status: Asset["status"]) =>
     j<Asset>(`/assets/${id}`, { method: "PATCH", body: JSON.stringify({ status }) }),
   selectNodeAsset: (nid: string, aid: string) =>

@@ -271,6 +271,11 @@ def list_assets(owner_type: str, owner_id: str, db: Session = Depends(get_db)):
     ).scalars().all()
 
 
+@router.get("/assets/{aid}", response_model=AssetOut)
+def get_asset(aid: str, db: Session = Depends(get_db)):
+    return _get(db, Asset, aid)
+
+
 @router.patch("/assets/{aid}", response_model=AssetOut)
 def triage_asset(aid: str, body: TriageUpdate, db: Session = Depends(get_db)):
     a = _get(db, Asset, aid)

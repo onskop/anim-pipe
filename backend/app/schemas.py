@@ -207,6 +207,7 @@ class ComfyModels(BaseModel):
     online: bool
     error: str | None = None
     checkpoints: list[str] = Field(default_factory=list)
+    loras: list[str] = Field(default_factory=list)
     upscale_models: list[str] = Field(default_factory=list)
     samplers: list[str] = Field(default_factory=list)
     schedulers: list[str] = Field(default_factory=list)

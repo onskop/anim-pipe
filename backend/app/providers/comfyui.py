@@ -61,7 +61,7 @@ async def list_models(base_url: str | None = None) -> dict[str, Any]:
     url = (base_url or get_settings().comfyui_url).rstrip("/")
     out: dict[str, Any] = {
         "online": False, "error": None,
-        "checkpoints": [], "upscale_models": [], "samplers": [], "schedulers": [],
+        "checkpoints": [], "loras": [], "upscale_models": [], "samplers": [], "schedulers": [],
     }
 
     async def _opts(http: httpx.AsyncClient, node: str, field: str) -> list[str]:
@@ -73,6 +73,10 @@ async def list_models(base_url: str | None = None) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=10) as http:
             out["checkpoints"] = await _opts(http, "CheckpointLoaderSimple", "ckpt_name")
+            try:
+                out["loras"] = await _opts(http, "LoraLoader", "lora_name")
+            except Exception:
+                pass  # node may be absent
             try:
                 out["upscale_models"] = await _opts(http, "UpscaleModelLoader", "model_name")
             except Exception:
@@ -95,7 +99,7 @@ class ComfyUIProvider:
 
     # --- public API -----------------------------------------------------
     async def generate_image(self, req: ImageRequest) -> GenAsset:
-        wf, mapping = self._load("txt2img_anime.json")
+        wf, meta = self._load("txt2img_anime.json")
         seed = req.seed if req.seed is not None else random.randint(0, 2**31)
         async with httpx.AsyncClient(timeout=600) as http:
             patch = {
@@ -116,7 +120,10 @@ class ComfyUIProvider:
                 ref_name = await self._upload(http, req.ref_images[0], "ref.png")
                 patch["ref_image"] = ref_name
                 patch["ip_weight"] = req.ip_adapter_weight
-            self._apply(wf, mapping, patch)
+            # Splice out the LoRA / IP-Adapter stack when this character doesn't
+            # use it, so the same template runs with or without consistency.
+            self._prune_optional(wf, meta.get("optional", {}), set(patch))
+            self._apply(wf, meta.get("patch", {}), patch)
             data, ext, mime = await self._run(http, wf)
         return GenAsset(
             data=data, ext=ext, mime=mime, width=req.width, height=req.height,
@@ -125,7 +132,8 @@ class ComfyUIProvider:
 
     async def generate_video(self, req: VideoRequest) -> GenAsset:
         template = "video_loop.json" if req.kind == "loop" else "video_flf2v.json"
-        wf, mapping = self._load(template)
+        wf, meta = self._load(template)
+        mapping = meta.get("patch", {})
         seed = req.seed if req.seed is not None else random.randint(0, 2**31)
         async with httpx.AsyncClient(timeout=1200) as http:
             patch: dict[str, Any] = {
@@ -154,7 +162,8 @@ class ComfyUIProvider:
         )
 
     async def upscale(self, req: UpscaleRequest) -> GenAsset:
-        wf, mapping = self._load("upscale.json")
+        wf, meta = self._load("upscale.json")
+        mapping = meta.get("patch", {})
         async with httpx.AsyncClient(timeout=900) as http:
             if req.image is None:
                 raise ComfyUIError("comfyui upscale currently supports images only")
@@ -168,12 +177,54 @@ class ComfyUIProvider:
 
     # --- template handling ---------------------------------------------
     def _load(self, name: str) -> tuple[dict, dict]:
+        """Return ``(workflow, animpipe_meta)``. ``meta`` carries the ``patch``
+        map and an optional ``optional`` map (see :meth:`_prune_optional`)."""
         path = WORKFLOW_DIR / name
         if not path.exists():
             raise ComfyUIError(f"workflow template missing: {name}")
         doc = json.loads(path.read_text())
-        mapping = doc.pop("_animpipe", {}).get("patch", {})
-        return doc, mapping
+        meta = doc.pop("_animpipe", {})
+        return doc, meta
+
+    @staticmethod
+    def _prune_optional(wf: dict, optional: dict, active_fields: set[str]) -> None:
+        """Splice out optional nodes whose gating field is absent this run.
+
+        Each entry is ``{node_id: {"requires": field, "passthrough": {slot: ref}}}``.
+        A node is removed when its ``requires`` field is not in ``active_fields``;
+        any connection that read one of its outputs is rewired through
+        ``passthrough`` (following the chain across consecutively removed nodes)
+        so the graph stays valid. This lets one static template serve characters
+        with *and* without the LoRA / IP-Adapter consistency stack.
+        """
+        removed = {nid for nid, spec in optional.items()
+                   if spec.get("requires") not in active_fields}
+        if not removed:
+            return
+
+        def resolve(node_id: str, slot: int):
+            seen: set[str] = set()
+            while node_id in removed and node_id not in seen:
+                seen.add(node_id)
+                pt = optional[node_id].get("passthrough", {})
+                nxt = pt.get(str(slot))
+                if nxt is None:
+                    return None  # output should only feed other removed nodes
+                node_id, slot = nxt[0], nxt[1]
+            return [node_id, slot]
+
+        for nid, node in wf.items():
+            if nid in removed:
+                continue
+            for key, val in list(node.get("inputs", {}).items()):
+                if (isinstance(val, list) and len(val) == 2
+                        and isinstance(val[0], str) and isinstance(val[1], int)
+                        and val[0] in removed):
+                    resolved = resolve(val[0], val[1])
+                    if resolved is not None:
+                        node["inputs"][key] = resolved
+        for nid in removed:
+            wf.pop(nid, None)
 
     @staticmethod
     def _apply(wf: dict, mapping: dict, values: dict) -> None:

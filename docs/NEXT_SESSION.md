@@ -14,6 +14,15 @@ Last updated 2026-06-15.
   offline banner. Persisted to `data/runtime.json` (git-ignored).
 - **Character editor** in the Inspector: name + appearance description. The
   description is the *consistency anchor* prepended to every node prompt.
+- **Character consistency stack: LoRA + IP-Adapter** (new). `txt2img_anime.json`
+  now carries `LoraLoader` + `IPAdapterUnifiedLoader`/`IPAdapterAdvanced` nodes;
+  the ComfyUI adapter **splices them out per-candidate** when a character has no
+  LoRA / no reference image (driven by an `_animpipe.optional` map that rewires
+  the model/clip chain), so one template serves both cases. The character editor
+  exposes a **LoRA picker** (from `GET /api/comfyui/models` → `loras`),
+  **reference-image upload** (stored on `character.ref_image_ids`) with
+  thumbnails, and **LoRA / IP-Adapter weight** sliders. Covered by unit tests in
+  `tests/test_comfyui_workflow.py`.
 - **Prompt assembly** = `[character.description] + [node.prompt] + DEFAULT_STYLE`;
   negatives = `DEFAULT_NEGATIVE` + the node's negative box (now wired).
 - **Triage**: reject = hard-delete (row + file), **AI-score-all**, **sort by
@@ -32,19 +41,19 @@ nothing else changes.
 
 ## Prioritized next steps
 
-1. **Character consistency: LoRA + IP-Adapter** (highest value). The request
-   fields exist (`lora_name`, `lora_weight`, `ref_images`, `ip_adapter_weight`)
-   but the `txt2img_anime.json` workflow has **no LoraLoader / IPAdapter nodes**.
-   - Rebuild the workflow in ComfyUI with those nodes; export API JSON; extend
-     the `_animpipe.patch` map (`lora_name`, `lora_weight`, `ref_image`,
-     `ip_weight`).
-   - Add a **LoRA dropdown** in the UI: extend `GET /api/comfyui/models` to also
-     return `loras` (object_info `LoraLoader.lora_name`) and surface it in the
-     character editor.
-   - Wire **reference-image upload** → store on the character (`ref_image_ids`,
-     upload endpoint already exists) → flows into `ImageRequest.ref_images`
-     (already plumbed in the pipeline).
-   - Test on the 3070 (SD1.5 LoRA + IP-Adapter both fit in 8 GB).
+1. **Verify the consistency stack on real hardware** (the code landed this
+   session — now prove it on the 3070). SD1.5 LoRA + IP-Adapter both fit in 8 GB.
+   - Install the **ComfyUI_IPAdapter_plus** custom pack + an IP-Adapter model;
+     drop a character LoRA in `ComfyUI/models/loras`. If your node class names
+     differ from the shipped template (`IPAdapterUnifiedLoader` /
+     `IPAdapterAdvanced`), rebuild in the editor, export API JSON, and fix the
+     `_animpipe.patch` + `optional` maps in `txt2img_anime.json`.
+   - In the UI: pick the LoRA in the character editor, upload 1+ reference
+     images, tune the weight sliders, generate, and eyeball identity drift across
+     nodes. (The adapter auto-splices the LoRA/IP-Adapter nodes out when a
+     character supplies neither, so unconfigured characters still generate.)
+   - Multi-image IP-Adapter: today only `ref_images[0]` is uploaded/used — extend
+     to batch all refs if needed.
 
 2. **Real upscale**: install an ESRGAN model (`RealESRGAN_x4plus_anime_6B` or
    `4x-UltraSharp`) into `ComfyUI/models/upscale_models`, pick it in ⚙ Settings,
@@ -79,5 +88,11 @@ nothing else changes.
 - The UI can only control fields listed in each workflow's `_animpipe.patch` map;
   anything else means editing the workflow JSON (rebuild in ComfyUI → export API
   format → fix the map).
-- Consistency today is **text-only** (similar, not identical) — that's exactly
-  what step 1 fixes.
+- A workflow can now mark nodes **optional** via `_animpipe.optional`
+  (`{node_id: {requires, passthrough}}`): the adapter removes them when the gating
+  field is absent and rewires their outputs through `passthrough`. That's how the
+  LoRA / IP-Adapter stack stays in one template yet runs for characters that use
+  neither — reuse the pattern for any other "only when configured" node.
+- Consistency now stacks **text anchor + LoRA + IP-Adapter** (identity, not just
+  similarity). It's only as good as the LoRA/reference images you supply, and runs
+  on ComfyUI only (mock ignores the extra fields).
