@@ -127,13 +127,21 @@ Evolved** (`closed_loop`) or image-to-video for seamless idle loops. See
 
 ## Roadmap (next milestones)
 
-- [ ] Motion-mask painter in the UI (cinemagraph region control) + mask wired to loops.
-- [ ] Auto-triage pass: batch-score candidates and auto-shortlist the top N.
-- [ ] Character sheet workflow: ref-image upload → IP-Adapter wired into txt2img.
-- [ ] Regeneration with seed/param tweaks from a chosen candidate (lineage exists).
-- [ ] Export: `graph.json` + asset bundle for the game engine.
-- [ ] Cost dashboard (per-job/per-project) and cloud API adapters (fal/Replicate/Runway).
-- [ ] WebSocket job progress (currently polled).
+> See [`docs/NEXT_SESSION.md`](docs/NEXT_SESSION.md) for the detailed, prioritized plan.
+
+Done:
+- [x] Local ComfyUI image generation wired (checkpoint/size/steps/cfg/seed in the UI).
+- [x] Settings UI: live provider swap, OpenRouter config + test, ComfyUI URL, backend health/restart.
+- [x] Character editor (consistency anchor) + node negative prompt wired.
+- [x] Triage: batch AI-score + sort by score; reject hard-deletes.
+
+Next:
+- [ ] **Character consistency: LoRA + IP-Adapter wired into the txt2img workflow + UI** (top priority).
+- [ ] Real ESRGAN upscale (install model → flip provider; passthrough already wired).
+- [ ] Video workflows (AnimateDiff loops / Wan·LTX transitions) — rebuild the placeholder graphs, ideally on a rented GPU.
+- [ ] Auto-shortlist top N after scoring; regenerate-with-tweaks from a candidate (lineage exists).
+- [ ] Expose sampler/scheduler; final assembled-prompt preview.
+- [ ] Export `graph.json` + asset bundle; cost dashboard; WebSocket job progress; motion-mask painter.
 ```
 
 ## Layout
