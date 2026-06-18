@@ -65,6 +65,17 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: v
 .cand .meta { padding: 6px 8px; font-size: 11px; }
 .cand .actions { display: flex; gap: 4px; padding: 6px 8px; }
 .cand .actions button { flex: 1; padding: 4px; font-size: 11px; }
+/* variants tray (active vs held) */
+.variants { display: flex; flex-wrap: wrap; gap: 6px; }
+.variant { position: relative; width: 64px; height: 64px; padding: 0; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 6px; background: #0c0e13; }
+.variant img, .variant video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.variant.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.variant .vstar { position: absolute; top: 2px; left: 3px; color: var(--loop); font-size: 11px;
+  text-shadow: 0 0 2px #000; }
+.variant .vbadge { position: absolute; bottom: 0; left: 0; right: 0; font-size: 9px;
+  background: var(--accent); color: #0b1220; text-align: center; font-weight: 600; }
+
 /* character editor */
 .charbox { margin-top: 10px; padding: 10px; border: 1px solid var(--line);
   border-radius: 8px; background: var(--panel2); }

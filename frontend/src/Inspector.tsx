@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fileUrl } from "./api";
 import { useStore } from "./store";
-import type { ComfyModels, GEdge, GNode, Job } from "./types";
+import type { Asset, ComfyModels, GEdge, GNode, Job } from "./types";
 
 async function pollJob(id: string, onDone: () => void) {
   const tick = async () => {
@@ -45,6 +45,7 @@ export default function Inspector() {
   const [comfy, setComfy] = useState<ComfyModels | null>(null);
   const [imageProvider, setImageProvider] = useState("mock");
   const [gp, setGp] = useState<GenParams>(DEFAULT_PARAMS);
+  const [variants, setVariants] = useState<Asset[]>([]);
 
   const node: GNode | undefined =
     selection?.type === "node" ? graph?.nodes.find((x) => x.id === selection.id) : undefined;
@@ -81,6 +82,18 @@ export default function Inspector() {
     api.providers().then((p) => setImageProvider(p.image)).catch(() => {});
     api.comfyModels().then(setComfy).catch(() => setComfy(null));
   }, [selection?.id]);
+
+  // Variants tray: all assets for the selected node/edge.
+  const loadVariants = useCallback(async () => {
+    if (!selection) { setVariants([]); return; }
+    try { setVariants(await api.assets(selection.type, selection.id)); }
+    catch { setVariants([]); }
+  }, [selection?.type, selection?.id]);
+
+  useEffect(() => {
+    loadVariants();
+    // reload when the active pick changes or after a generation refreshes the graph
+  }, [loadVariants, node?.selected_asset_id, edge?.selected_asset_id]);
 
   if (!graph) return <div className="inspector muted">No project loaded.</div>;
   if (!node && !edge)
@@ -161,7 +174,24 @@ export default function Inspector() {
     });
   };
 
+  const setActive = async (a: Asset) => {
+    if (!selection) return;
+    if (selection.type === "node") await api.selectNodeAsset(selection.id, a.id);
+    else await api.selectEdgeAsset(selection.id, a.id);
+    await refresh();
+    await loadVariants();
+  };
+
   const isComfy = imageProvider === "comfyui";
+  const selectedId = node?.selected_asset_id ?? edge?.selected_asset_id ?? null;
+  // Kept variants = the keepers (accepted/starred) plus whatever is currently active.
+  const keptVariants = variants
+    .filter((a) => a.status === "accepted" || a.status === "starred" || a.id === selectedId)
+    .sort(
+      (a, b) =>
+        (b.id === selectedId ? 1 : 0) - (a.id === selectedId ? 1 : 0) ||
+        (b.status === "starred" ? 1 : 0) - (a.status === "starred" ? 1 : 0),
+    );
 
   return (
     <div className="inspector">
@@ -290,6 +320,33 @@ export default function Inspector() {
               ? "Seamless loop: start frame = end frame (breathing/scratching)."
               : "First→last frame clip between the two keyframes."}
           </p>
+        </>
+      )}
+
+      {keptVariants.length > 0 && (
+        <>
+          <h2>Variants — active vs held</h2>
+          <div className="variants">
+            {keptVariants.map((a) => (
+              <button
+                key={a.id}
+                className={`variant ${a.id === selectedId ? "active" : ""}`}
+                onClick={() => setActive(a)}
+                title={a.id === selectedId ? "active keyframe/clip" : "click to make active"}
+              >
+                {a.kind === "video" && a.path.endsWith(".mp4") ? (
+                  <video src={fileUrl(a.path)} muted playsInline />
+                ) : (
+                  <img src={fileUrl(a.thumb_path || a.path)} alt={a.role} />
+                )}
+                {a.status === "starred" && <span className="vstar">★</span>}
+                {a.id === selectedId && <span className="vbadge">active</span>}
+              </button>
+            ))}
+          </div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            Click a held variant to make it the active one. Use the triage gallery to add or cull.
+          </div>
         </>
       )}
 

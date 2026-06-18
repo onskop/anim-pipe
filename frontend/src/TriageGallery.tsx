@@ -57,17 +57,21 @@ export default function TriageGallery() {
     await load();
   };
 
-  const upscale = async (a: Asset) => {
-    const job = await api.upscale(a.id, { scale: 2 });
+  const pollThenLoad = (jobId: string, label: string) => {
     setLoading(true);
     const tick = async () => {
-      const j = await api.job(job.id);
+      const j = await api.job(jobId);
       if (j.status === "done") { await load(); }
-      else if (j.status === "error") { setLoading(false); alert(`Upscale failed: ${j.error}`); }
+      else if (j.status === "error") { setLoading(false); alert(`${label} failed: ${j.error}`); }
       else { setTimeout(tick, 800); }
     };
     setTimeout(tick, 800);
   };
+
+  const upscale = async (a: Asset) => pollThenLoad((await api.upscale(a.id, { scale: 2 })).id, "Upscale");
+
+  // "More like this": new candidates reusing this one's params (fresh seeds).
+  const regen = async (a: Asset) => pollThenLoad((await api.regenerate(a.id, 4)).id, "Regenerate");
 
   const view = sorted ? [...assets].sort((x, y) => scoreOf(y) - scoreOf(x)) : assets;
   const scoredCount = assets.filter((a) => scoreOf(a) >= 0).length;
@@ -129,6 +133,7 @@ export default function TriageGallery() {
                 </div>
                 <div className="actions">
                   <button onClick={() => score(a)} title="AI score">AI score</button>
+                  <button onClick={() => regen(a)} title="Generate 4 more like this (fresh seeds)">♻ More</button>
                   {a.kind === "image" && <button onClick={() => upscale(a)}>Upscale</button>}
                 </div>
               </div>

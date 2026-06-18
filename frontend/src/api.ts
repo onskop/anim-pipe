@@ -72,6 +72,8 @@ export const api = {
     j<GEdge>(`/edges/${eid}/select/${aid}`, { method: "POST" }),
   upscale: (aid: string, params: Record<string, unknown> = { scale: 2 }) =>
     j<Job>(`/assets/${aid}/upscale`, { method: "POST", body: JSON.stringify({ params }) }),
+  regenerate: (aid: string, n: number, params: Record<string, unknown> = {}) =>
+    j<Job>(`/assets/${aid}/regenerate`, { method: "POST", body: JSON.stringify({ n, params }) }),
   score: (aid: string) => j<Asset>(`/assets/${aid}/score`, { method: "POST" }),
   deleteAsset: (aid: string) => j(`/assets/${aid}`, { method: "DELETE" }),
 

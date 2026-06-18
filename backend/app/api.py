@@ -342,6 +342,29 @@ def upscale_asset(aid: str, body: GenerateRequest, db: Session = Depends(get_db)
     return _enqueue_job(db, a.project_id, "asset", aid, "upscale", 1, body.params)
 
 
+# Params worth reusing when regenerating "more like this" candidate.
+_REGEN_PARAMS = ("width", "height", "steps", "cfg", "checkpoint",
+                 "frames", "fps", "motion_scale")
+
+
+@router.post("/assets/{aid}/regenerate", response_model=JobOut)
+def regenerate_asset(aid: str, body: GenerateRequest, db: Session = Depends(get_db)):
+    """Generate more candidates for this asset's owner, reusing the candidate's
+    own params (size/steps/cfg/checkpoint…). Seed is intentionally dropped so we
+    get fresh variations; pass seed in params to reproduce exactly."""
+    a = _get(db, Asset, aid)
+    if a.owner_type not in ("node", "edge") or not a.owner_id:
+        raise HTTPException(400, "asset has no node/edge owner to regenerate for")
+    base = {k: v for k, v in (a.params or {}).items() if k in _REGEN_PARAMS}
+    base.update(body.params or {})
+    n = body.n or get_settings().default_candidates
+    if a.owner_type == "node":
+        return _enqueue_job(db, a.project_id, "node", a.owner_id, "image", n, base)
+    e = db.get(Edge, a.owner_id)
+    kind = "video_loop" if (e and e.kind == "loop") else "video_transition"
+    return _enqueue_job(db, a.project_id, "edge", a.owner_id, kind, n, base)
+
+
 @router.post("/assets/{aid}/score", response_model=AssetOut)
 async def score_asset(aid: str, db: Session = Depends(get_db)):
     a = _get(db, Asset, aid)
