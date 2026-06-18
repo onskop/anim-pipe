@@ -40,9 +40,10 @@ def test_full_flow(client):
     assert client.get("/api/health").json()["status"] == "ok"
 
     pid = client.post("/api/projects", json={"name": "t"}).json()["id"]
-    n1 = client.post(f"/api/projects/{pid}/nodes",
+    gid = client.post(f"/api/projects/{pid}/graphs", json={"name": "Main"}).json()["id"]
+    n1 = client.post(f"/api/graphs/{gid}/nodes",
                      json={"key": "idle", "prompt": "hero standing"}).json()
-    n2 = client.post(f"/api/projects/{pid}/nodes",
+    n2 = client.post(f"/api/graphs/{gid}/nodes",
                      json={"key": "wave", "prompt": "hero waving"}).json()
 
     # Keyframe images for both nodes.
@@ -55,9 +56,9 @@ def test_full_flow(client):
         client.post(f"/api/nodes/{n['id']}/select/{assets[0]['id']}")
 
     # Loop edge (n1 -> n1) and a transition edge (n1 -> n2).
-    loop = client.post(f"/api/projects/{pid}/edges", json={
+    loop = client.post(f"/api/graphs/{gid}/edges", json={
         "source_node_id": n1["id"], "target_node_id": n1["id"], "kind": "loop"}).json()
-    trans = client.post(f"/api/projects/{pid}/edges", json={
+    trans = client.post(f"/api/graphs/{gid}/edges", json={
         "source_node_id": n1["id"], "target_node_id": n2["id"], "kind": "transition"}).json()
 
     for e in (loop, trans):

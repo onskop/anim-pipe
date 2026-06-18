@@ -1,6 +1,6 @@
 import type {
-  Asset, Character, ComfyModels, GEdge, GNode, Graph, Job, Project,
-  ProviderStatus, Settings, TestLLMResult,
+  Asset, Character, ComfyModels, GEdge, GNode, Graph, GraphInfo, GraphMeta, Job,
+  Project, ProviderStatus, Settings, TestLLMResult,
 } from "./types";
 
 const BASE = "/api";
@@ -21,21 +21,29 @@ export const api = {
   listProjects: () => j<Project[]>("/projects"),
   createProject: (name: string, scenario = "") =>
     j<Project>("/projects", { method: "POST", body: JSON.stringify({ name, scenario }) }),
-  graph: (pid: string) => j<Graph>(`/projects/${pid}/graph`),
 
-  scenario: (pid: string, scenario: string) =>
-    j<Graph>(`/projects/${pid}/scenario`, {
+  // graphs (scenes)
+  graphs: (pid: string) => j<GraphInfo[]>(`/projects/${pid}/graphs`),
+  createGraph: (pid: string, name: string) =>
+    j<GraphMeta>(`/projects/${pid}/graphs`, { method: "POST", body: JSON.stringify({ name }) }),
+  renameGraph: (gid: string, body: { name?: string; start_node_id?: string }) =>
+    j<GraphMeta>(`/graphs/${gid}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteGraph: (gid: string) => j(`/graphs/${gid}`, { method: "DELETE" }),
+  graphContents: (gid: string) => j<Graph>(`/graphs/${gid}`),
+
+  scenario: (gid: string, scenario: string) =>
+    j<Graph>(`/graphs/${gid}/scenario`, {
       method: "POST", body: JSON.stringify({ scenario, apply: true }),
     }),
 
-  createNode: (pid: string, body: Partial<GNode>) =>
-    j<GNode>(`/projects/${pid}/nodes`, { method: "POST", body: JSON.stringify(body) }),
+  createNode: (gid: string, body: Partial<GNode>) =>
+    j<GNode>(`/graphs/${gid}/nodes`, { method: "POST", body: JSON.stringify(body) }),
   updateNode: (id: string, body: Partial<GNode>) =>
     j<GNode>(`/nodes/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteNode: (id: string) => j(`/nodes/${id}`, { method: "DELETE" }),
 
-  createEdge: (pid: string, body: Partial<GEdge>) =>
-    j<GEdge>(`/projects/${pid}/edges`, { method: "POST", body: JSON.stringify(body) }),
+  createEdge: (gid: string, body: Partial<GEdge>) =>
+    j<GEdge>(`/graphs/${gid}/edges`, { method: "POST", body: JSON.stringify(body) }),
   updateEdge: (id: string, body: Partial<GEdge>) =>
     j<GEdge>(`/edges/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEdge: (id: string) => j(`/edges/${id}`, { method: "DELETE" }),

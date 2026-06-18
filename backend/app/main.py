@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import queue, runtime
 from .api import router
-from .db import init_db
+from .db import init_db, migrate
 
 logging.basicConfig(level=logging.INFO)
 
@@ -22,6 +22,7 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     runtime.apply_to_settings()  # layer data/runtime.json over .env defaults
     init_db()
+    migrate()  # backfill graphs on pre-existing DBs
     queue.start_workers()
     queue.requeue_pending()
     yield

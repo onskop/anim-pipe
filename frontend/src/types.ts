@@ -17,9 +17,23 @@ export interface Character {
   ip_adapter_weight: number;
 }
 
+export interface GraphMeta {
+  id: string;
+  project_id: string;
+  name: string;
+  start_node_id: string | null;
+  created_at: string;
+}
+
+export interface GraphInfo extends GraphMeta {
+  node_count: number;
+  edge_count: number;
+}
+
 export interface GNode {
   id: string;
   project_id: string;
+  graph_id: string | null;
   key: string;
   title: string;
   prompt: string;
@@ -36,6 +50,7 @@ export interface GNode {
 export interface GEdge {
   id: string;
   project_id: string;
+  graph_id: string | null;
   source_node_id: string;
   target_node_id: string;
   kind: "loop" | "transition";
@@ -50,6 +65,7 @@ export interface GEdge {
 
 export interface Graph {
   project: Project;
+  graph: GraphMeta;
   characters: Character[];
   nodes: GNode[];
   edges: GEdge[];

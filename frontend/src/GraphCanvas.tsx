@@ -27,7 +27,7 @@ function KeyframeNode({ data, selected }: NodeProps) {
 const nodeTypes = { keyframe: KeyframeNode };
 
 export default function GraphCanvas() {
-  const { graph, selection, select, refresh, projectId } = useStore();
+  const { graph, selection, select, refresh, graphId } = useStore();
 
   const rfNodes: Node[] = useMemo(
     () =>
@@ -60,15 +60,15 @@ export default function GraphCanvas() {
 
   const onConnect = useCallback(
     async (c: Connection) => {
-      if (!projectId || !c.source || !c.target) return;
-      await api.createEdge(projectId, {
+      if (!graphId || !c.source || !c.target) return;
+      await api.createEdge(graphId, {
         source_node_id: c.source,
         target_node_id: c.target,
         kind: c.source === c.target ? "loop" : "transition",
       });
       await refresh();
     },
-    [projectId, refresh],
+    [graphId, refresh],
   );
 
   const onNodeDragStop = useCallback(

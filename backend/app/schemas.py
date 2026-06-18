@@ -60,6 +60,7 @@ class NodeIn(BaseModel):
 class NodeOut(ORM):
     id: str
     project_id: str
+    graph_id: str | None
     key: str
     title: str
     prompt: str
@@ -84,6 +85,7 @@ class EdgeIn(BaseModel):
 class EdgeOut(ORM):
     id: str
     project_id: str
+    graph_id: str | None
     source_node_id: str
     target_node_id: str
     kind: str
@@ -96,8 +98,33 @@ class EdgeOut(ORM):
     selected_kind: str | None = None  # image|video
 
 
+# --- Graphs (scenes) ---------------------------------------------------
+class GraphMeta(ORM):
+    id: str
+    project_id: str
+    name: str
+    start_node_id: str | None
+    created_at: dt.datetime
+
+
+class GraphInfo(GraphMeta):
+    """Graph metadata + counts for the switcher list."""
+    node_count: int = 0
+    edge_count: int = 0
+
+
+class GraphCreate(BaseModel):
+    name: str = "Scene"
+
+
+class GraphRename(BaseModel):
+    name: str | None = None
+    start_node_id: str | None = None
+
+
 class GraphOut(BaseModel):
     project: ProjectOut
+    graph: GraphMeta
     characters: list[CharacterOut]
     nodes: list[NodeOut]
     edges: list[EdgeOut]

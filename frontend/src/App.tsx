@@ -12,7 +12,7 @@ import type { Project, ProviderStatus } from "./types";
 type Mode = "editor" | "player";
 
 export default function App() {
-  const { projectId, graph, setProject, refresh } = useStore();
+  const { projectId, graphId, graphs, graph, setProject, setGraph, refresh } = useStore();
   const [projects, setProjects] = useState<Project[]>([]);
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [scenario, setScenario] = useState("");
@@ -31,21 +31,45 @@ export default function App() {
     const name = prompt("Project name?");
     if (!name) return;
     const p = await api.createProject(name);
+    await api.createGraph(p.id, "Main"); // start every project with one scene
     await loadProjects();
     await setProject(p.id);
   };
 
+  const newGraph = async () => {
+    if (!projectId) return;
+    const name = prompt("Graph (scene) name?", "Scene");
+    if (!name) return;
+    const g = await api.createGraph(projectId, name);
+    await refresh();
+    await setGraph(g.id);
+  };
+
+  const renameGraph = async (gid: string, current: string) => {
+    const name = prompt("Rename graph", current);
+    if (!name || name === current) return;
+    await api.renameGraph(gid, { name });
+    await refresh();
+  };
+
+  const removeGraph = async (gid: string) => {
+    if (!projectId) return;
+    if (!confirm("Delete this graph and all its nodes/edges?")) return;
+    await api.deleteGraph(gid);
+    await setProject(projectId); // reload graphs and select the first remaining
+  };
+
   const importScenario = async () => {
-    if (!projectId || !scenario.trim()) return;
-    await api.scenario(projectId, scenario);
+    if (!graphId || !scenario.trim()) return;
+    await api.scenario(graphId, scenario);
     await refresh();
   };
 
   const addNode = async () => {
-    if (!projectId) return;
+    if (!graphId) return;
     const key = prompt("Node key (e.g. idle_campfire)?");
     if (!key) return;
-    await api.createNode(projectId, { key, title: key, x: 200, y: 200, prompt: key });
+    await api.createNode(graphId, { key, title: key, x: 200, y: 200, prompt: key });
     await refresh();
   };
 
@@ -94,9 +118,44 @@ export default function App() {
           {projects.length === 0 && <span className="muted">No projects yet.</span>}
         </div>
 
+        {projectId && (
+          <>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <h2 style={{ margin: "14px 0 6px" }}>Graphs (scenes)</h2>
+              <button style={{ flex: "0 0 auto" }} onClick={newGraph}>+ New</button>
+            </div>
+            <div className="stack">
+              {graphs.map((g) => (
+                <div
+                  key={g.id}
+                  className={`proj ${g.id === graphId ? "active" : ""}`}
+                  onClick={() => setGraph(g.id)}
+                >
+                  <div className="row" style={{ justifyContent: "space-between" }}>
+                    <span>{g.name}</span>
+                    <span className="muted" style={{ flex: "0 0 auto", fontSize: 11 }}>
+                      {g.node_count}n · {g.edge_count}e
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {graphs.length === 0 && <span className="muted">No graphs yet — add one.</span>}
+            </div>
+            {graphId && (
+              <div className="row" style={{ marginTop: 6 }}>
+                <button onClick={() => {
+                  const g = graphs.find((x) => x.id === graphId);
+                  if (g) renameGraph(g.id, g.name);
+                }}>Rename</button>
+                <button className="danger" onClick={() => removeGraph(graphId)}>Delete</button>
+              </div>
+            )}
+          </>
+        )}
+
         {graph && (
           <>
-            <h2>Graph</h2>
+            <h2>Active graph</h2>
             <div className="stack">
               <button onClick={addNode}>+ Add node</button>
               <button onClick={addCharacter}>+ Add character</button>
@@ -145,7 +204,9 @@ export default function App() {
           )
         ) : (
           <div className="muted" style={{ padding: 24 }}>
-            Create or select a project to start building your animation graph.
+            {projectId
+              ? "Create or select a graph (scene) to start building."
+              : "Create or select a project to start building your animation graph."}
           </div>
         )}
       </div>

@@ -41,12 +41,34 @@ class Project(Base):
     characters: Mapped[list["Character"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    graphs: Mapped[list["Graph"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
     nodes: Mapped[list["Node"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
     edges: Mapped[list["Edge"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+
+class Graph(Base):
+    """A switchable scene within a project: its own set of nodes + edges.
+
+    Characters and game variables live at the project level (shared across
+    graphs); a graph groups the keyframes/clips for one scene and (later)
+    carries a `start_node_id` the player enters from."""
+
+    __tablename__ = "graphs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    name: Mapped[str] = mapped_column(String(200), default="Main")
+    # Player entry node (Phase 4); nullable until set.
+    start_node_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(default=_now)
+
+    project: Mapped[Project] = relationship(back_populates="graphs")
 
 
 class Character(Base):
@@ -74,6 +96,9 @@ class Node(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    # Which graph (scene) this node belongs to. Nullable only for migration;
+    # always set on create.
+    graph_id: Mapped[str | None] = mapped_column(ForeignKey("graphs.id"), nullable=True)
     key: Mapped[str] = mapped_column(String(120))  # stable slug used by the game
     title: Mapped[str] = mapped_column(String(200), default="")
     prompt: Mapped[str] = mapped_column(Text, default="")
@@ -100,6 +125,7 @@ class Edge(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"))
+    graph_id: Mapped[str | None] = mapped_column(ForeignKey("graphs.id"), nullable=True)
     source_node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id"))
     # For loops, target == source.
     target_node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id"))

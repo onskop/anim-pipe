@@ -5,20 +5,20 @@ import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import editops, queue, runtime, storage
 from .config import get_settings
 from .db import get_db
-from .models import Asset, Character, Edge, GenerationJob, Node, Project
+from .models import Asset, Character, Edge, GenerationJob, Graph, Node, Project
 from .providers import get_llm_provider
 from .providers import comfyui as comfyui_provider
 from .schemas import (
     AssetOut, CharacterIn, CharacterOut, ComfyModels, EditRequest, EdgeIn, EdgeOut,
-    ExpandRequest, GenerateRequest, GraphOut, JobOut, NodeIn, NodeOut, ProjectCreate,
-    ProjectOut, ProviderStatus, ScenarioRequest, SettingsOut, SettingsPatch,
-    TestLLMResult, TriageUpdate,
+    ExpandRequest, GenerateRequest, GraphCreate, GraphInfo, GraphMeta, GraphOut,
+    GraphRename, JobOut, NodeIn, NodeOut, ProjectCreate, ProjectOut, ProviderStatus,
+    ScenarioRequest, SettingsOut, SettingsPatch, TestLLMResult, TriageUpdate,
 )
 
 router = APIRouter(prefix="/api")
@@ -126,12 +126,15 @@ def list_projects(db: Session = Depends(get_db)):
     return db.execute(select(Project).order_by(Project.created_at.desc())).scalars().all()
 
 
-@router.get("/projects/{pid}/graph", response_model=GraphOut)
-def get_graph(pid: str, db: Session = Depends(get_db)):
-    p = _get(db, Project, pid)
-    chars = db.execute(select(Character).where(Character.project_id == pid)).scalars().all()
-    nodes = db.execute(select(Node).where(Node.project_id == pid)).scalars().all()
-    edges = db.execute(select(Edge).where(Edge.project_id == pid)).scalars().all()
+def _graph_contents(db: Session, graph: Graph) -> GraphOut:
+    """Assemble one graph's contents (project + shared characters + this graph's
+    nodes/edges, with selected-asset thumbs/paths resolved for canvas + player)."""
+    p = db.get(Project, graph.project_id)
+    chars = db.execute(
+        select(Character).where(Character.project_id == graph.project_id)
+    ).scalars().all()
+    nodes = db.execute(select(Node).where(Node.graph_id == graph.id)).scalars().all()
+    edges = db.execute(select(Edge).where(Edge.graph_id == graph.id)).scalars().all()
 
     def selected(asset_id: str | None) -> tuple[str | None, str | None, str | None]:
         """(thumb_for_canvas, full_path_for_player, kind) for a selected asset."""
@@ -146,7 +149,64 @@ def get_graph(pid: str, db: Session = Depends(get_db)):
         n.selected_thumb, n.selected_path, n.selected_kind = selected(n.selected_asset_id)
     for e in edges:
         e.selected_thumb, e.selected_path, e.selected_kind = selected(e.selected_asset_id)
-    return GraphOut(project=p, characters=chars, nodes=nodes, edges=edges)
+    return GraphOut(project=p, graph=graph, characters=chars, nodes=nodes, edges=edges)
+
+
+# --- graphs (scenes) ---------------------------------------------------
+@router.post("/projects/{pid}/graphs", response_model=GraphMeta)
+def create_graph(pid: str, body: GraphCreate, db: Session = Depends(get_db)):
+    _get(db, Project, pid)
+    g = Graph(project_id=pid, name=body.name)
+    db.add(g)
+    db.commit()
+    return g
+
+
+@router.get("/projects/{pid}/graphs", response_model=list[GraphInfo])
+def list_graphs(pid: str, db: Session = Depends(get_db)):
+    _get(db, Project, pid)
+    graphs = db.execute(
+        select(Graph).where(Graph.project_id == pid).order_by(Graph.created_at)
+    ).scalars().all()
+    out: list[GraphInfo] = []
+    for g in graphs:
+        info = GraphInfo.model_validate(g)
+        info.node_count = db.execute(
+            select(func.count()).select_from(Node).where(Node.graph_id == g.id)
+        ).scalar() or 0
+        info.edge_count = db.execute(
+            select(func.count()).select_from(Edge).where(Edge.graph_id == g.id)
+        ).scalar() or 0
+        out.append(info)
+    return out
+
+
+@router.get("/graphs/{gid}", response_model=GraphOut)
+def get_graph(gid: str, db: Session = Depends(get_db)):
+    return _graph_contents(db, _get(db, Graph, gid))
+
+
+@router.patch("/graphs/{gid}", response_model=GraphMeta)
+def update_graph(gid: str, body: GraphRename, db: Session = Depends(get_db)):
+    g = _get(db, Graph, gid)
+    if body.name is not None:
+        g.name = body.name
+    if body.start_node_id is not None:
+        g.start_node_id = body.start_node_id
+    db.commit()
+    return g
+
+
+@router.delete("/graphs/{gid}")
+def delete_graph(gid: str, db: Session = Depends(get_db)):
+    g = _get(db, Graph, gid)
+    for e in db.execute(select(Edge).where(Edge.graph_id == gid)).scalars().all():
+        db.delete(e)
+    for n in db.execute(select(Node).where(Node.graph_id == gid)).scalars().all():
+        db.delete(n)
+    db.delete(g)
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/projects/{pid}")
@@ -176,10 +236,10 @@ def update_character(cid: str, body: CharacterIn, db: Session = Depends(get_db))
 
 
 # --- nodes -------------------------------------------------------------
-@router.post("/projects/{pid}/nodes", response_model=NodeOut)
-def create_node(pid: str, body: NodeIn, db: Session = Depends(get_db)):
-    _get(db, Project, pid)
-    n = Node(project_id=pid, **body.model_dump())
+@router.post("/graphs/{gid}/nodes", response_model=NodeOut)
+def create_node(gid: str, body: NodeIn, db: Session = Depends(get_db)):
+    g = _get(db, Graph, gid)
+    n = Node(project_id=g.project_id, graph_id=g.id, **body.model_dump())
     db.add(n)
     db.commit()
     return n
@@ -208,10 +268,10 @@ def delete_node(nid: str, db: Session = Depends(get_db)):
 
 
 # --- edges -------------------------------------------------------------
-@router.post("/projects/{pid}/edges", response_model=EdgeOut)
-def create_edge(pid: str, body: EdgeIn, db: Session = Depends(get_db)):
-    _get(db, Project, pid)
-    e = Edge(project_id=pid, **body.model_dump())
+@router.post("/graphs/{gid}/edges", response_model=EdgeOut)
+def create_edge(gid: str, body: EdgeIn, db: Session = Depends(get_db)):
+    g = _get(db, Graph, gid)
+    e = Edge(project_id=g.project_id, graph_id=g.id, **body.model_dump())
     db.add(e)
     db.commit()
     return e
@@ -456,15 +516,17 @@ async def expand_prompt(body: ExpandRequest):
     return {"prompt": await get_llm_provider().expand_prompt(body.brief, body.context)}
 
 
-@router.post("/projects/{pid}/scenario", response_model=GraphOut)
-async def scenario_to_graph(pid: str, body: ScenarioRequest, db: Session = Depends(get_db)):
-    p = _get(db, Project, pid)
+@router.post("/graphs/{gid}/scenario", response_model=GraphOut)
+async def scenario_to_graph(gid: str, body: ScenarioRequest, db: Session = Depends(get_db)):
+    g = _get(db, Graph, gid)
+    pid = g.project_id
     graph = await get_llm_provider().scenario_to_graph(body.scenario)
     if body.apply:
+        p = db.get(Project, pid)
         p.scenario = body.scenario
         key_to_node: dict[str, Node] = {}
         for i, nd in enumerate(graph.get("nodes", [])):
-            node = Node(project_id=pid, key=nd.get("key", f"n{i+1}"),
+            node = Node(project_id=pid, graph_id=g.id, key=nd.get("key", f"n{i+1}"),
                         title=nd.get("title", ""), prompt=nd.get("prompt", ""),
                         x=160 + (i % 5) * 220, y=120 + (i // 5) * 220)
             db.add(node)
@@ -474,7 +536,8 @@ async def scenario_to_graph(pid: str, body: ScenarioRequest, db: Session = Depen
             src = key_to_node.get(ed.get("source"))
             tgt = key_to_node.get(ed.get("target"))
             if src and tgt:
-                db.add(Edge(project_id=pid, source_node_id=src.id, target_node_id=tgt.id,
-                            kind=ed.get("kind", "transition"), label=ed.get("label", "")))
+                db.add(Edge(project_id=pid, graph_id=g.id, source_node_id=src.id,
+                            target_node_id=tgt.id, kind=ed.get("kind", "transition"),
+                            label=ed.get("label", "")))
         db.commit()
-    return get_graph(pid, db)
+    return _graph_contents(db, g)
