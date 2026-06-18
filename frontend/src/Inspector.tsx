@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, fileUrl } from "./api";
+import MaskPainter from "./MaskPainter";
 import { useStore } from "./store";
 import type { Asset, ComfyModels, GEdge, GNode, Job } from "./types";
 
@@ -46,6 +47,8 @@ export default function Inspector() {
   const [imageProvider, setImageProvider] = useState("mock");
   const [gp, setGp] = useState<GenParams>(DEFAULT_PARAMS);
   const [variants, setVariants] = useState<Asset[]>([]);
+  const [maskOpen, setMaskOpen] = useState(false);
+  const [maskPath, setMaskPath] = useState<string | null>(null);
 
   const node: GNode | undefined =
     selection?.type === "node" ? graph?.nodes.find((x) => x.id === selection.id) : undefined;
@@ -94,6 +97,14 @@ export default function Inspector() {
     loadVariants();
     // reload when the active pick changes or after a generation refreshes the graph
   }, [loadVariants, node?.selected_asset_id, edge?.selected_asset_id]);
+
+  // Resolve the current motion-mask asset for preview.
+  useEffect(() => {
+    setMaskPath(null);
+    if (edge?.motion_mask_id) {
+      api.asset(edge.motion_mask_id).then((a) => setMaskPath(a.path)).catch(() => {});
+    }
+  }, [edge?.id, edge?.motion_mask_id]);
 
   if (!graph) return <div className="inspector muted">No project loaded.</div>;
   if (!node && !edge)
@@ -184,6 +195,9 @@ export default function Inspector() {
 
   const isComfy = imageProvider === "comfyui";
   const selectedId = node?.selected_asset_id ?? edge?.selected_asset_id ?? null;
+  // Source keyframe of the selected edge (what a motion mask is painted over).
+  const srcNode = edge ? graph.nodes.find((nn) => nn.id === edge.source_node_id) : undefined;
+  const srcImg = srcNode?.selected_path || srcNode?.selected_thumb || null;
   // Kept variants = the keepers (accepted/starred) plus whatever is currently active.
   const keptVariants = variants
     .filter((a) => a.status === "accepted" || a.status === "starred" || a.id === selectedId)
@@ -320,6 +334,35 @@ export default function Inspector() {
               ? "Seamless loop: start frame = end frame (breathing/scratching)."
               : "First→last frame clip between the two keyframes."}
           </p>
+
+          <h2>Motion mask (cinemagraph)</h2>
+          {srcImg ? (
+            <>
+              {maskPath && (
+                <img src={fileUrl(maskPath)} alt="motion mask"
+                  style={{ width: "100%", borderRadius: 6, marginBottom: 6, background: "#000" }} />
+              )}
+              <div className="row">
+                <button onClick={() => setMaskOpen(true)}>
+                  {edge!.motion_mask_id ? "Repaint mask" : "Paint motion mask"}
+                </button>
+                {edge!.motion_mask_id && (
+                  <button className="danger"
+                    onClick={async () => { await api.updateEdge(edge!.id, { motion_mask_id: null }); await refresh(); }}>
+                    Remove
+                  </button>
+                )}
+              </div>
+              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                Limits where this clip animates — fed to the video generator.
+              </div>
+            </>
+          ) : (
+            <p className="muted">
+              Generate the source keyframe (<strong>{srcNode?.title || srcNode?.key}</strong>) first
+              to paint a mask over it.
+            </p>
+          )}
         </>
       )}
 
@@ -444,6 +487,16 @@ export default function Inspector() {
         >
           Delete edge
         </button>
+      )}
+
+      {maskOpen && edge && srcImg && (
+        <MaskPainter
+          srcUrl={fileUrl(srcImg)}
+          projectId={graph.project.id}
+          edgeId={edge.id}
+          onClose={() => setMaskOpen(false)}
+          onSaved={refresh}
+        />
       )}
     </div>
   );
