@@ -27,6 +27,8 @@ export interface GNode {
   character_id: string | null;
   selected_asset_id: string | null;
   selected_thumb: string | null;
+  selected_path: string | null;
+  selected_kind: string | null;
   x: number;
   y: number;
 }
@@ -42,6 +44,8 @@ export interface GEdge {
   motion_mask_id: string | null;
   selected_asset_id: string | null;
   selected_thumb: string | null;
+  selected_path: string | null;
+  selected_kind: string | null;
 }
 
 export interface Graph {

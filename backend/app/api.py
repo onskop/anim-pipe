@@ -133,16 +133,19 @@ def get_graph(pid: str, db: Session = Depends(get_db)):
     nodes = db.execute(select(Node).where(Node.project_id == pid)).scalars().all()
     edges = db.execute(select(Edge).where(Edge.project_id == pid)).scalars().all()
 
-    def thumb(asset_id: str | None) -> str | None:
+    def selected(asset_id: str | None) -> tuple[str | None, str | None, str | None]:
+        """(thumb_for_canvas, full_path_for_player, kind) for a selected asset."""
         if not asset_id:
-            return None
+            return (None, None, None)
         a = db.get(Asset, asset_id)
-        return (a.thumb_path or a.path) if a else None
+        if not a:
+            return (None, None, None)
+        return (a.thumb_path or a.path, a.path, a.kind)
 
     for n in nodes:
-        n.selected_thumb = thumb(n.selected_asset_id)
+        n.selected_thumb, n.selected_path, n.selected_kind = selected(n.selected_asset_id)
     for e in edges:
-        e.selected_thumb = thumb(e.selected_asset_id)
+        e.selected_thumb, e.selected_path, e.selected_kind = selected(e.selected_asset_id)
     return GraphOut(project=p, characters=chars, nodes=nodes, edges=edges)
 
 

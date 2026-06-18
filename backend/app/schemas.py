@@ -67,6 +67,8 @@ class NodeOut(ORM):
     character_id: str | None
     selected_asset_id: str | None
     selected_thumb: str | None = None
+    selected_path: str | None = None  # full asset file (still) for the player
+    selected_kind: str | None = None  # image|video
     x: float
     y: float
 
@@ -90,6 +92,8 @@ class EdgeOut(ORM):
     motion_mask_id: str | None
     selected_asset_id: str | None
     selected_thumb: str | None = None
+    selected_path: str | None = None  # full clip/still file for the player
+    selected_kind: str | None = None  # image|video
 
 
 class GraphOut(BaseModel):

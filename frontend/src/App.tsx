@@ -3,10 +3,13 @@ import { ReactFlowProvider } from "reactflow";
 import { api } from "./api";
 import GraphCanvas from "./GraphCanvas";
 import Inspector from "./Inspector";
+import Player from "./Player";
 import Settings from "./Settings";
 import TriageGallery from "./TriageGallery";
 import { useStore } from "./store";
 import type { Project, ProviderStatus } from "./types";
+
+type Mode = "editor" | "player";
 
 export default function App() {
   const { projectId, graph, setProject, refresh } = useStore();
@@ -14,6 +17,7 @@ export default function App() {
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
   const [scenario, setScenario] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [mode, setMode] = useState<Mode>("editor");
 
   const loadProjects = async () => setProjects(await api.listProjects());
   const loadProviders = () => api.providers().then(setProviders).catch(() => setProviders(null));
@@ -64,6 +68,17 @@ export default function App() {
             <button onClick={newProject}>+ New</button>
           </div>
         </div>
+
+        {graph && (
+          <div className="modeToggle">
+            <button className={mode === "editor" ? "on" : ""} onClick={() => setMode("editor")}>
+              Editor
+            </button>
+            <button className={mode === "player" ? "on" : ""} onClick={() => setMode("player")}>
+              Player
+            </button>
+          </div>
+        )}
 
         <h2>Projects</h2>
         <div className="stack">
@@ -121,9 +136,13 @@ export default function App() {
 
       <div className="canvas">
         {graph ? (
-          <ReactFlowProvider>
-            <GraphCanvas />
-          </ReactFlowProvider>
+          mode === "player" ? (
+            <Player graph={graph} />
+          ) : (
+            <ReactFlowProvider>
+              <GraphCanvas />
+            </ReactFlowProvider>
+          )
         ) : (
           <div className="muted" style={{ padding: 24 }}>
             Create or select a project to start building your animation graph.
@@ -131,8 +150,12 @@ export default function App() {
         )}
       </div>
 
-      <Inspector />
-      <TriageGallery />
+      {mode === "editor" && (
+        <>
+          <Inspector />
+          <TriageGallery />
+        </>
+      )}
       {showSettings && (
         <Settings onClose={() => setShowSettings(false)} onSaved={loadProviders} />
       )}
