@@ -150,6 +150,11 @@ class TriageUpdate(BaseModel):
     status: str  # candidate|accepted|rejected|starred
 
 
+class EditRequest(BaseModel):
+    op: str  # crop|resize|trim|extract_frame
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
 # --- LLM ---------------------------------------------------------------
 class ExpandRequest(BaseModel):
     brief: str

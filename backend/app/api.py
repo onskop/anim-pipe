@@ -8,15 +8,15 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import queue, runtime, storage
+from . import editops, queue, runtime, storage
 from .config import get_settings
 from .db import get_db
 from .models import Asset, Character, Edge, GenerationJob, Node, Project
 from .providers import get_llm_provider
 from .providers import comfyui as comfyui_provider
 from .schemas import (
-    AssetOut, CharacterIn, CharacterOut, ComfyModels, EdgeIn, EdgeOut, ExpandRequest,
-    GenerateRequest, GraphOut, JobOut, NodeIn, NodeOut, ProjectCreate,
+    AssetOut, CharacterIn, CharacterOut, ComfyModels, EditRequest, EdgeIn, EdgeOut,
+    ExpandRequest, GenerateRequest, GraphOut, JobOut, NodeIn, NodeOut, ProjectCreate,
     ProjectOut, ProviderStatus, ScenarioRequest, SettingsOut, SettingsPatch,
     TestLLMResult, TriageUpdate,
 )
@@ -363,6 +363,53 @@ def regenerate_asset(aid: str, body: GenerateRequest, db: Session = Depends(get_
     e = db.get(Edge, a.owner_id)
     kind = "video_loop" if (e and e.kind == "loop") else "video_transition"
     return _enqueue_job(db, a.project_id, "edge", a.owner_id, kind, n, base)
+
+
+@router.post("/assets/{aid}/edit", response_model=AssetOut)
+def edit_asset(aid: str, body: EditRequest, db: Session = Depends(get_db)):
+    """Deterministic, model-free edit → new lineage-linked candidate Asset.
+
+    crop/resize → image; trim → clip; extract_frame → a keyframe candidate on a
+    node (the edge's target by default, or args.node_id) so you can promote a
+    good clip frame into a node."""
+    a = _get(db, Asset, aid)
+    data = storage.read_bytes(a.path)
+    try:
+        if body.op == "crop":
+            res = editops.crop(data, body.args.get("box", {}))
+        elif body.op == "resize":
+            res = editops.resize(data, body.args["width"], body.args["height"])
+        elif body.op == "extract_frame":
+            res = editops.extract_frame(data, int(body.args.get("index", 0)))
+        elif body.op == "trim":
+            res = editops.trim(data, int(body.args.get("start", 0)), body.args.get("end"))
+        else:
+            raise HTTPException(400, f"unknown edit op: {body.op}")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"edit '{body.op}' failed: {exc}")
+
+    owner_type, owner_id = a.owner_type, a.owner_id
+    if body.op == "extract_frame":
+        owner_type = "node"
+        owner_id = body.args.get("node_id")
+        if not owner_id and a.owner_type == "edge" and a.owner_id:
+            e = db.get(Edge, a.owner_id)
+            owner_id = e.target_node_id if e else None
+
+    rel, sha = storage.store_bytes(res.data, res.ext)
+    is_video = bool(res.frames and res.frames > 1)
+    new = Asset(
+        project_id=a.project_id, owner_type=owner_type, owner_id=owner_id,
+        kind="video" if is_video else "image", role="edit", status="candidate",
+        path=rel, thumb_path=storage.make_thumb(rel), sha256=sha, mime=res.mime,
+        width=res.width, height=res.height, frames=res.frames, fps=res.fps,
+        params={"edit": body.op, **body.args}, parent_asset_id=a.id,
+    )
+    db.add(new)
+    db.commit()
+    return new
 
 
 @router.post("/assets/{aid}/score", response_model=AssetOut)

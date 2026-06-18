@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, fileUrl } from "./api";
+import EditModal from "./EditModal";
 import { useStore } from "./store";
 import type { Asset } from "./types";
 
@@ -12,6 +13,7 @@ export default function TriageGallery() {
   const [loading, setLoading] = useState(false);
   const [scoring, setScoring] = useState<string | null>(null);
   const [sorted, setSorted] = useState(false);
+  const [editing, setEditing] = useState<Asset | null>(null);
 
   const load = async () => {
     if (!triage) return;
@@ -134,12 +136,21 @@ export default function TriageGallery() {
                 <div className="actions">
                   <button onClick={() => score(a)} title="AI score">AI score</button>
                   <button onClick={() => regen(a)} title="Generate 4 more like this (fresh seeds)">♻ More</button>
+                  <button onClick={() => setEditing(a)} title="Crop/resize/trim/extract-frame">✂ Edit</button>
                   {a.kind === "image" && <button onClick={() => upscale(a)}>Upscale</button>}
                 </div>
               </div>
             );
           })}
         </div>
+
+        {editing && (
+          <EditModal
+            asset={editing}
+            onClose={() => setEditing(null)}
+            onApplied={() => { refresh(); load(); }}
+          />
+        )}
       </div>
     </div>
   );

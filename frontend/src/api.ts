@@ -74,6 +74,8 @@ export const api = {
     j<Job>(`/assets/${aid}/upscale`, { method: "POST", body: JSON.stringify({ params }) }),
   regenerate: (aid: string, n: number, params: Record<string, unknown> = {}) =>
     j<Job>(`/assets/${aid}/regenerate`, { method: "POST", body: JSON.stringify({ n, params }) }),
+  editAsset: (aid: string, op: string, args: Record<string, unknown> = {}) =>
+    j<Asset>(`/assets/${aid}/edit`, { method: "POST", body: JSON.stringify({ op, args }) }),
   score: (aid: string) => j<Asset>(`/assets/${aid}/score`, { method: "POST" }),
   deleteAsset: (aid: string) => j(`/assets/${aid}`, { method: "DELETE" }),
 
