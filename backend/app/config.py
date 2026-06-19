@@ -29,11 +29,21 @@ class Settings(BaseSettings):
     upscale_provider: str = Field(default="mock")  # mock | comfyui
     llm_provider: str = Field(default="mock")  # mock | openrouter
 
+    # --- Local tools ----------------------------------------------------
+    # ffmpeg binary for video frame extraction. Empty -> auto-discover on PATH,
+    # else fall back to the one bundled by the imageio-ffmpeg package.
+    ffmpeg_path: str = Field(default="")
+
     # --- ComfyUI (local GPU) --------------------------------------------
     comfyui_url: str = Field(default="http://127.0.0.1:8188")
     # Default ESRGAN model name for upscaling (must exist in ComfyUI
     # models/upscale_models). Empty -> the upscale workflow's own default.
     upscale_model: str = Field(default="")
+    # Which workflow template (file in providers/workflows/) backs each ComfyUI
+    # job. Swap from the Settings picker without touching code.
+    workflow_image: str = Field(default="txt2img_anime.json")
+    workflow_loop: str = Field(default="video_loop.json")
+    workflow_transition: str = Field(default="video_flf2v.json")
 
     # --- OpenRouter (swappable "intelligence" line) ---------------------
     openrouter_api_key: str = Field(default="")
@@ -41,6 +51,21 @@ class Settings(BaseSettings):
     # Default text + vision models; override per request from the UI.
     llm_text_model: str = Field(default="anthropic/claude-3.5-sonnet")
     llm_vision_model: str = Field(default="anthropic/claude-3.5-sonnet")
+    # System prompts for the two LLM jobs — editable live from the UI so the
+    # scoring rubric and prompt-expansion style can be tuned per model.
+    llm_expand_prompt: str = Field(
+        default=(
+            "You write concise, vivid image-generation prompts for an anime/cartoon "
+            "game character. Keep character identity consistent. Return ONLY the prompt."
+        )
+    )
+    llm_triage_prompt: str = Field(
+        default=(
+            "You are a strict art director triaging generated game assets. "
+            "Score 0..1 and return ONLY JSON with keys: overall, character_consistency, "
+            "motion_quality, loop_seamlessness, artifacts, verdict (keep|reject|borderline), notes."
+        )
+    )
 
     # --- Generation defaults --------------------------------------------
     default_candidates: int = Field(default=4)  # how many to fan out per request

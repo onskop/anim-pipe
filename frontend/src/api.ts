@@ -1,6 +1,6 @@
 import type {
   Asset, Character, ComfyModels, GEdge, GNode, Graph, GraphInfo, GraphMeta, Job,
-  Project, ProviderStatus, Settings, TestLLMResult,
+  Project, ProviderStatus, Settings, TestLLMResult, WorkflowInfo,
 } from "./types";
 
 const BASE = "/api";
@@ -21,6 +21,9 @@ export const api = {
   listProjects: () => j<Project[]>("/projects"),
   createProject: (name: string, scenario = "") =>
     j<Project>("/projects", { method: "POST", body: JSON.stringify({ name, scenario }) }),
+  updateProject: (pid: string, body: { name?: string; scenario?: string }) =>
+    j<Project>(`/projects/${pid}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteProject: (pid: string) => j(`/projects/${pid}`, { method: "DELETE" }),
 
   // graphs (scenes)
   graphs: (pid: string) => j<GraphInfo[]>(`/projects/${pid}/graphs`),
@@ -52,6 +55,7 @@ export const api = {
     j<Character>(`/projects/${pid}/characters`, { method: "POST", body: JSON.stringify(body) }),
   updateCharacter: (cid: string, body: Partial<Character>) =>
     j<Character>(`/characters/${cid}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteCharacter: (cid: string) => j(`/characters/${cid}`, { method: "DELETE" }),
 
   generateNode: (id: string, n: number, params = {}) =>
     j<Job>(`/nodes/${id}/generate`, { method: "POST", body: JSON.stringify({ n, params }) }),
@@ -84,6 +88,11 @@ export const api = {
     j<Job>(`/assets/${aid}/regenerate`, { method: "POST", body: JSON.stringify({ n, params }) }),
   editAsset: (aid: string, op: string, args: Record<string, unknown> = {}) =>
     j<Asset>(`/assets/${aid}/edit`, { method: "POST", body: JSON.stringify({ op, args }) }),
+  // Attach a lightweight copy of an asset to another node/edge (shares the file).
+  copyAsset: (aid: string, ownerType: "node" | "edge", ownerId: string) =>
+    j<Asset>(`/assets/${aid}/copy`, {
+      method: "POST", body: JSON.stringify({ owner_type: ownerType, owner_id: ownerId }),
+    }),
   score: (aid: string) => j<Asset>(`/assets/${aid}/score`, { method: "POST" }),
   deleteAsset: (aid: string) => j(`/assets/${aid}`, { method: "DELETE" }),
 
@@ -96,6 +105,7 @@ export const api = {
     j<Settings>("/settings", { method: "PATCH", body: JSON.stringify(patch) }),
   testLLM: () => j<TestLLMResult>("/settings/test-llm", { method: "POST" }),
   comfyModels: () => j<ComfyModels>("/comfyui/models"),
+  workflows: () => j<WorkflowInfo[]>("/workflows"),
   restart: () => j<{ ok: boolean }>("/restart", { method: "POST" }),
   health: async () => {
     try {

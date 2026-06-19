@@ -1,94 +1,382 @@
+/* Editor modal — the main place to write prompts, generate, and manage the
+   candidate resources for a node or edge. Opened from the inspector's
+   "Edit & generate". (Internally still the `triage` selection in the store.)
+
+   Layout goals: leanest path is prompt → Generate. Generation settings are
+   tucked behind a ⚙ disclosure. Each candidate gets one compact icon row;
+   "Use" only appears on non-active cards (the active one wears a badge). The
+   old per-card "More" is folded into the top Generate control as an *anchor*:
+   anchoring a card seeds the generator with that image's recipe and produces
+   fresh variations. */
 import { useEffect, useState } from "react";
 import { api, fileUrl } from "./api";
+import { dialog } from "./dialogs";
 import EditModal from "./EditModal";
 import { useStore } from "./store";
-import type { Asset } from "./types";
+import type { Asset, ComfyModels } from "./types";
 
 const scoreOf = (a: Asset) =>
   typeof a.ai_score?.overall === "number" ? (a.ai_score.overall as number) : -1;
+const numParam = (p: Record<string, unknown>, k: string, fallback: number) =>
+  typeof p[k] === "number" ? (p[k] as number) : fallback;
+
+interface GenParams {
+  checkpoint: string;
+  width: number;
+  height: number;
+  steps: number;
+  cfg: number;
+  seed: string;
+  // video (edge) only
+  frames: number;
+  fps: number;
+  motion: number;
+}
+const IMAGE_PARAMS: GenParams = {
+  checkpoint: "", width: 512, height: 512, steps: 20, cfg: 7, seed: "",
+  frames: 81, fps: 16, motion: 0.6,
+};
+// Wan2.2-friendly defaults for edge clips (~5 s @ 16 fps, 720p).
+const VIDEO_PARAMS: GenParams = { ...IMAGE_PARAMS, width: 720, height: 720 };
 
 export default function TriageGallery() {
-  const { triage, openTriage, refresh } = useStore();
+  const { triage, graph, openTriage, refresh } = useStore();
   const [assets, setAssets] = useState<Asset[]>([]);
   const [loading, setLoading] = useState(false);
-  const [scoring, setScoring] = useState<string | null>(null);
+  const [scoreProg, setScoreProg] = useState<{ done: number; total: number } | null>(null);
   const [sorted, setSorted] = useState(false);
   const [editing, setEditing] = useState<Asset | null>(null);
+  const [copyFor, setCopyFor] = useState<Asset | null>(null);
+  const [copyMsg, setCopyMsg] = useState<string | null>(null);
+  // editor state
+  const [draft, setDraft] = useState("");
+  const [neg, setNeg] = useState("");
+  const [savedFlag, setSavedFlag] = useState(false);
+  const [expanding, setExpanding] = useState(false);
+  const [genBusy, setGenBusy] = useState(false);
+  const [count, setCount] = useState(4);
+  const [comfy, setComfy] = useState<ComfyModels | null>(null);
+  const [imageProvider, setImageProvider] = useState("mock");
+  const [videoProvider, setVideoProvider] = useState("mock");
+  const [gp, setGp] = useState<GenParams>(IMAGE_PARAMS);
+  const [showSettings, setShowSettings] = useState(false);
+  const [anchor, setAnchor] = useState<Asset | null>(null);
+
+  const node = triage?.type === "node" ? graph?.nodes.find((n) => n.id === triage.id) : undefined;
+  const edge = triage?.type === "edge" ? graph?.edges.find((e) => e.id === triage.id) : undefined;
 
   const load = async () => {
-    if (!triage) return;
+    if (!triage || triage.type === "character") return;
     setLoading(true);
     setAssets(await api.assets(triage.type, triage.id));
     setLoading(false);
   };
 
   useEffect(() => {
-    load();
+    if (!triage || triage.type === "character") return;
+    setDraft(node?.prompt ?? edge?.prompt ?? "");
+    setNeg(node?.negative_prompt ?? "");
     setSorted(false);
+    setCopyFor(null);
+    setAnchor(null);
+    setGp(triage.type === "edge" ? VIDEO_PARAMS : IMAGE_PARAMS);
+    load();
+    api.providers().then((p) => { setImageProvider(p.image); setVideoProvider(p.video); }).catch(() => {});
+    api.comfyModels().then(setComfy).catch(() => setComfy(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [triage?.id]);
 
-  if (!triage) return null;
+  if (!triage || triage.type === "character") return null;
 
-  const set = (a: Asset, status: Asset["status"]) =>
-    api.triage(a.id, status).then(load);
+  const setP = <K extends keyof GenParams>(k: K, v: GenParams[K]) =>
+    setGp((c) => ({ ...c, [k]: v }));
 
-  const remove = (a: Asset) => api.deleteAsset(a.id).then(load);
+  const remove = (a: Asset) => api.deleteAsset(a.id).then(load).then(refresh);
 
   const choose = async (a: Asset) => {
     if (triage.type === "node") await api.selectNodeAsset(triage.id, a.id);
     else await api.selectEdgeAsset(triage.id, a.id);
     await refresh();
     await load();
+    dialog.toast("Set as active");
   };
 
   const score = (a: Asset) => api.score(a.id).then(load);
 
-  const scoreAll = async () => {
-    let i = 0;
-    for (const a of assets) {
-      i++;
-      setScoring(`Scoring ${i}/${assets.length}…`);
-      try {
-        await api.score(a.id);
-      } catch {
-        /* skip a failed candidate, keep going */
+  // Score only the candidates that have no score yet. Runs a bounded worker
+  // pool (parallel, but throttled so we don't flood the local scoring model)
+  // and updates the progress bar as each one lands.
+  const SCORE_CONCURRENCY = 4;
+  const scoreRemaining = async () => {
+    const todo = assets.filter((a) => scoreOf(a) < 0);
+    if (todo.length === 0) return;
+    const total = todo.length;
+    let done = 0;
+    let next = 0;
+    setScoreProg({ done: 0, total });
+    const worker = async () => {
+      while (next < todo.length) {
+        const a = todo[next++];
+        try { await api.score(a.id); } catch { /* keep going */ }
+        setScoreProg({ done: ++done, total });
       }
-    }
-    setScoring(null);
-    setSorted(true); // surface the best ones immediately
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(SCORE_CONCURRENCY, total) }, worker),
+    );
+    setScoreProg(null);
+    setSorted(true);
     await load();
   };
 
-  const pollThenLoad = (jobId: string, label: string) => {
+  const pollThenLoad = (jobId: string, label: string, onDone?: () => void) => {
     setLoading(true);
     const tick = async () => {
       const j = await api.job(jobId);
-      if (j.status === "done") { await load(); }
-      else if (j.status === "error") { setLoading(false); alert(`${label} failed: ${j.error}`); }
-      else { setTimeout(tick, 800); }
+      if (j.status === "done") { await load(); await refresh(); onDone?.(); }
+      else if (j.status === "error") { setLoading(false); onDone?.(); dialog.toast(`${label} failed: ${j.error}`, "error"); }
+      else setTimeout(tick, 800);
     };
     setTimeout(tick, 800);
   };
 
   const upscale = async (a: Asset) => pollThenLoad((await api.upscale(a.id, { scale: 2 })).id, "Upscale");
 
-  // "More like this": new candidates reusing this one's params (fresh seeds).
-  const regen = async (a: Asset) => pollThenLoad((await api.regenerate(a.id, 4)).id, "Regenerate");
+  // Anchor a candidate: prime the generator with its recipe so the next
+  // Generate yields fresh variations of that image (toggles off if re-picked).
+  const toggleAnchor = (a: Asset) =>
+    setAnchor((prev) => {
+      if (prev?.id === a.id) return null;
+      const p = a.params || {};
+      setGp((c) => ({
+        ...c,
+        width: numParam(p, "width", c.width),
+        height: numParam(p, "height", c.height),
+        steps: numParam(p, "steps", c.steps),
+        cfg: numParam(p, "cfg", c.cfg),
+        checkpoint: typeof p.checkpoint === "string" ? (p.checkpoint as string) : c.checkpoint,
+      }));
+      return a;
+    });
+
+  // --- prompt + generation (the modal is the editor) ---------------------
+  const savePrompt = async () => {
+    if (node) await api.updateNode(node.id, { prompt: draft, negative_prompt: neg });
+    if (edge) await api.updateEdge(edge.id, { prompt: draft });
+    await refresh();
+    setSavedFlag(true);
+    setTimeout(() => setSavedFlag(false), 1200);
+  };
+
+  const expand = async () => {
+    setExpanding(true);
+    try {
+      const { prompt } = await api.expand(draft, node?.key || edge?.kind || "");
+      setDraft(prompt);
+      dialog.toast("Prompt expanded ✓", "success");
+    } catch (e) {
+      dialog.toast(`Expand failed: ${e}`, "error");
+    } finally {
+      setExpanding(false);
+    }
+  };
+
+  const generate = async () => {
+    await savePrompt();
+    setGenBusy(true);
+    const params: Record<string, unknown> = node
+      ? { width: gp.width, height: gp.height, steps: gp.steps, cfg: gp.cfg }
+      : { width: gp.width, height: gp.height, frames: gp.frames, fps: gp.fps, motion_scale: gp.motion };
+    if (node && gp.checkpoint) params.checkpoint = gp.checkpoint;
+    if (gp.seed.trim() !== "") params.seed = Number(gp.seed);
+    dialog.toast(
+      anchor
+        ? `Generating ${count} variation${count > 1 ? "s" : ""}…`
+        : `Generating ${count} candidate${count > 1 ? "s" : ""}…`,
+    );
+    try {
+      const job = anchor
+        ? await api.regenerate(anchor.id, count, params)
+        : node
+          ? await api.generateNode(node.id, count, params)
+          : await api.generateEdge(edge!.id, count, params);
+      pollThenLoad(job.id, "Generation", () => {
+        setGenBusy(false);
+        dialog.toast("Candidates ready ✓", "success");
+      });
+    } catch (e) {
+      setGenBusy(false);
+      dialog.toast(`Generation failed: ${e}`, "error");
+    }
+  };
+
+  // --- copy-to targets ---------------------------------------------------
+  const copyTargets = graph
+    ? [
+        ...graph.nodes
+          .filter((nd) => !(triage.type === "node" && nd.id === triage.id))
+          .map((nd) => ({ type: "node" as const, id: nd.id, label: `▢ ${nd.title || nd.key}` })),
+        ...graph.edges
+          .filter((ed) => !(triage.type === "edge" && ed.id === triage.id))
+          .map((ed) => ({ type: "edge" as const, id: ed.id, label: `↦ ${ed.label || ed.kind}` })),
+      ]
+    : [];
+  const copyTo = async (a: Asset, t: { type: "node" | "edge"; id: string; label: string }) => {
+    await api.copyAsset(a.id, t.type, t.id);
+    setCopyFor(null);
+    setCopyMsg(`Copied to ${t.label}`);
+    setTimeout(() => setCopyMsg(null), 1800);
+    await refresh();
+  };
 
   const view = sorted ? [...assets].sort((x, y) => scoreOf(y) - scoreOf(x)) : assets;
   const scoredCount = assets.filter((a) => scoreOf(a) >= 0).length;
+  const unscored = assets.length - scoredCount;
+  const isComfy = (edge ? videoProvider : imageProvider) === "comfyui";
+  const title = node ? node.title || node.key : edge ? edge.label || edge.kind : "";
+  const activeId = node?.selected_asset_id ?? edge?.selected_asset_id ?? null;
+  const busy = genBusy || loading;
+  const isClip = (a: Asset) => a.kind === "video" && a.path.endsWith(".mp4");
 
   return (
     <div className="overlay" onClick={() => openTriage(null)}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="row" style={{ justifyContent: "space-between" }}>
-          <h2 style={{ margin: 0 }}>Triage · {triage.type} candidates</h2>
-          <button onClick={() => openTriage(null)}>Close ✕</button>
+        <div className="modalHead">
+          <h2 style={{ margin: 0 }}>
+            Edit · {triage.type} · <span className="muted">{title}</span>
+          </h2>
+          <button className="xbtn" onClick={() => openTriage(null)} title="Close">✕</button>
         </div>
 
-        <div className="row" style={{ marginTop: 8, gap: 8, flexWrap: "wrap" }}>
-          <button onClick={scoreAll} disabled={!!scoring || assets.length === 0}>
-            {scoring ?? `AI score all (${assets.length})`}
+        {/* prompt */}
+        <div className="sectionLabel">Prompt — what gets generated</div>
+        <textarea rows={4} value={draft} placeholder="Describe this keyframe / motion…"
+          onChange={(e) => setDraft(e.target.value)} />
+        {node && (
+          <>
+            <label className="muted" style={{ display: "block", marginTop: 6 }}>negative prompt</label>
+            <textarea rows={2} value={neg} placeholder="low quality, blurry, extra limbs…"
+              onChange={(e) => setNeg(e.target.value)} />
+          </>
+        )}
+        <div className="endRow">
+          <button onClick={savePrompt}>{savedFlag ? "Saved ✓" : "Save"}</button>
+          <button onClick={expand} disabled={expanding}>
+            {expanding ? "✨ Expanding…" : "✨ Expand"}
+          </button>
+        </div>
+
+        {/* generation */}
+        <div className="sectionLabel">Generate {isComfy ? "· ComfyUI" : "· mock"}</div>
+        {!isComfy && (
+          <p className="muted" style={{ marginTop: 0 }}>
+            Mock provider — switch the {edge ? "video" : "image"} provider to ComfyUI in ⚙ Settings to use your models.
+          </p>
+        )}
+
+        {anchor && (
+          <div className="anchorSlot">
+            {isClip(anchor)
+              ? <video src={fileUrl(anchor.path)} muted playsInline />
+              : <img src={fileUrl(anchor.path)} alt="anchor" />}
+            <div className="txt">
+              <b>Anchored</b> — Generate makes fresh variations reusing this candidate's
+              saved settings{anchor.params.checkpoint ? " & model" : ""}.
+            </div>
+            <button className="xbtn" onClick={() => setAnchor(null)} title="Clear anchor">✕</button>
+          </div>
+        )}
+
+        <div className="genRow">
+          <label className="muted">count</label>
+          <input type="number" min={1} max={16} value={count}
+            onChange={(e) => setCount(+e.target.value)} />
+          <button className="primary grow" disabled={genBusy} onClick={generate}>
+            {genBusy ? "Generating…" : anchor ? `Generate ${count} variations` : `Generate ${count}`}
+          </button>
+          {isComfy && (
+            <button onClick={() => setShowSettings((s) => !s)} title="Generation settings">
+              ⚙ {showSettings ? "▴" : "▾"}
+            </button>
+          )}
+        </div>
+
+        {showSettings && isComfy && (
+          <div className="stack" style={{ marginTop: 8 }}>
+            {node && (
+              <>
+                <label className="muted">checkpoint</label>
+                {comfy?.online && comfy.checkpoints.length > 0 ? (
+                  <select value={gp.checkpoint} onChange={(e) => setP("checkpoint", e.target.value)}>
+                    <option value="">— workflow default —</option>
+                    {comfy.checkpoints.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="muted">{comfy ? "ComfyUI not reachable" : "loading…"}</span>
+                )}
+              </>
+            )}
+            <div className="grid2">
+              <div className="stack" style={{ gap: 3 }}>
+                <label className="muted">width</label>
+                <input type="number" step={64} value={gp.width} onChange={(e) => setP("width", +e.target.value)} />
+              </div>
+              <div className="stack" style={{ gap: 3 }}>
+                <label className="muted">height</label>
+                <input type="number" step={64} value={gp.height} onChange={(e) => setP("height", +e.target.value)} />
+              </div>
+              {node ? (
+                <>
+                  <div className="stack" style={{ gap: 3 }}>
+                    <label className="muted">steps</label>
+                    <input type="number" value={gp.steps} onChange={(e) => setP("steps", +e.target.value)} />
+                  </div>
+                  <div className="stack" style={{ gap: 3 }}>
+                    <label className="muted">cfg</label>
+                    <input type="number" step={0.5} value={gp.cfg} onChange={(e) => setP("cfg", +e.target.value)} />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="stack" style={{ gap: 3 }}>
+                    <label className="muted">frames</label>
+                    <input type="number" step={1} value={gp.frames} onChange={(e) => setP("frames", +e.target.value)} />
+                  </div>
+                  <div className="stack" style={{ gap: 3 }}>
+                    <label className="muted">fps</label>
+                    <input type="number" step={1} value={gp.fps} onChange={(e) => setP("fps", +e.target.value)} />
+                  </div>
+                </>
+              )}
+            </div>
+            {edge && (
+              <>
+                <label className="muted">motion scale — lower = subtler idle ({gp.motion})</label>
+                <input type="range" min={0} max={1} step={0.05} value={gp.motion}
+                  onChange={(e) => setP("motion", +e.target.value)} />
+                <span className="muted" style={{ fontSize: 11 }}>
+                  ≈ {gp.fps ? (gp.frames / gp.fps).toFixed(1) : "?"}s clip · start = source frame
+                  {edge.kind === "loop" ? " (looped back to itself)" : ", end = target frame"}.
+                </span>
+              </>
+            )}
+            <label className="muted">seed (blank = random per candidate)</label>
+            <input value={gp.seed} placeholder="random" onChange={(e) => setP("seed", e.target.value)} />
+          </div>
+        )}
+
+        {/* candidates / management */}
+        <div className="row resHead">
+          <div className="sectionLabel" style={{ flex: 1, margin: 0 }}>Resources · {assets.length}</div>
+          <button onClick={scoreRemaining} disabled={!!scoreProg || unscored === 0}
+            title="AI-score every candidate that has no score yet">
+            {scoreProg
+              ? `Scoring ${scoreProg.done}/${scoreProg.total}…`
+              : unscored
+                ? `Score ${unscored} unscored`
+                : "All scored ✓"}
           </button>
           <button
             className={sorted ? "primary" : ""}
@@ -96,49 +384,88 @@ export default function TriageGallery() {
             disabled={scoredCount === 0}
             title={scoredCount === 0 ? "Score candidates first" : "Toggle sort by AI score"}
           >
-            {sorted ? "Sorted by score ▾" : "Sort by score"}
+            {sorted ? "Sorted ▾" : "Sort by score"}
           </button>
-          <span className="muted" style={{ flex: 2, textAlign: "right" }}>
-            {scoredCount}/{assets.length} scored
-          </span>
         </div>
-
-        {loading && <p className="muted">Loading…</p>}
-        {!loading && assets.length === 0 && (
-          <p className="muted">No candidates yet — generate some from the inspector.</p>
+        {scoreProg && (
+          <div className="scoreProg">
+            <span style={{ width: `${scoreProg.total ? (scoreProg.done / scoreProg.total) * 100 : 0}%` }} />
+          </div>
         )}
+        {copyMsg && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{copyMsg}</div>}
+
+        {busy && (
+          <div className="genBanner">
+            <span className="spinner" /> {genBusy ? "Generating candidates…" : "Working…"}
+          </div>
+        )}
+        {!loading && assets.length === 0 && !genBusy && (
+          <p className="muted">No candidates yet — set a prompt and hit Generate.</p>
+        )}
+
         <div className="grid" style={{ marginTop: 12 }}>
           {view.map((a) => {
+            const active = a.id === activeId;
+            const isAnchor = anchor?.id === a.id;
             const overall = scoreOf(a) >= 0 ? scoreOf(a) : undefined;
             return (
-              <div key={a.id} className={`cand ${a.status}`}>
-                {a.kind === "video" && a.path.endsWith(".mp4") ? (
-                  <video src={fileUrl(a.path)} autoPlay loop muted playsInline />
-                ) : (
-                  <img src={fileUrl(a.path)} alt={a.id} />
-                )}
-                <div className="meta">
-                  <div>{a.role} · {a.width}×{a.height}{a.frames ? ` · ${a.frames}f` : ""}</div>
-                  <div className="muted">seed {String(a.params.seed ?? "—")}</div>
-                  {overall !== undefined && (
-                    <div className="score">
-                      AI {Math.round(overall * 100)}%
-                      {a.ai_score?.verdict ? ` · ${a.ai_score.verdict}` : ""}
-                      <div className="bar"><span style={{ width: `${overall * 100}%` }} /></div>
-                    </div>
+              <div key={a.id} className={`cand ${active ? "accepted" : ""}`}>
+                <div className="thumbWrap">
+                  {isClip(a) ? (
+                    <video src={fileUrl(a.path)} autoPlay loop muted playsInline />
+                  ) : (
+                    <img src={fileUrl(a.path)} alt={a.id} />
                   )}
+                  <div className="candTop">
+                    <span className="candBadges">
+                      {active && <span className="activeBadge">✓ Active</span>}
+                      {isAnchor && <span className="anchorBadge">⚓ Anchor</span>}
+                    </span>
+                    {overall !== undefined && (
+                      <span className={`scorePill ${overall >= 0.7 ? "good" : overall < 0.5 ? "bad" : ""}`}>
+                        {Math.round(overall * 100)}%
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div className="actions">
-                  <button onClick={() => choose(a)} title="Set as selected">✓ Use</button>
-                  <button onClick={() => set(a, "starred")} title="Star">★</button>
-                  <button className="danger" onClick={() => remove(a)} title="Delete candidate">🗑</button>
+                <div className="meta">
+                  {a.role} · {a.width}×{a.height}{a.frames ? ` · ${a.frames}f` : ""} · seed {String(a.params.seed ?? "—")}
                 </div>
-                <div className="actions">
-                  <button onClick={() => score(a)} title="AI score">AI score</button>
-                  <button onClick={() => regen(a)} title="Generate 4 more like this (fresh seeds)">♻ More</button>
-                  <button onClick={() => setEditing(a)} title="Crop/resize/trim/extract-frame">✂ Edit</button>
-                  {a.kind === "image" && <button onClick={() => upscale(a)}>Upscale</button>}
+                <div className="candBar">
+                  {active ? (
+                    <span className="useActive">✓ active</span>
+                  ) : (
+                    <button className="use" onClick={() => choose(a)} title="Set as the active asset for this node">✓ Use</button>
+                  )}
+                  <button className={isAnchor ? "anchorOn" : ""} onClick={() => toggleAnchor(a)}
+                    title="Anchor — Generate variations from this image's recipe">⚓</button>
+                  {overall === undefined && (
+                    <button className="ai" onClick={() => score(a)} title="AI score this candidate">AI</button>
+                  )}
+                  <button onClick={() => setEditing(a)} title="Crop / resize / trim / extract frame">✂</button>
+                  {a.kind === "image" && (
+                    <button onClick={() => upscale(a)} title="Upscale ×2">⤢</button>
+                  )}
+                  <button className={copyFor?.id === a.id ? "on" : ""} disabled={copyTargets.length === 0}
+                    onClick={() => setCopyFor((c) => (c?.id === a.id ? null : a))}
+                    title="Copy to another node / edge (shares the file)">⧉</button>
+                  <button className="danger del" onClick={() => remove(a)} title="Delete candidate">🗑</button>
                 </div>
+                {copyFor?.id === a.id && (
+                  <select
+                    defaultValue=""
+                    style={{ width: "calc(100% - 12px)", margin: "0 6px 6px" }}
+                    onChange={(e) => {
+                      const t = copyTargets.find((x) => `${x.type}:${x.id}` === e.target.value);
+                      if (t) copyTo(a, t);
+                    }}
+                  >
+                    <option value="" disabled>copy to…</option>
+                    {copyTargets.map((t) => (
+                      <option key={`${t.type}:${t.id}`} value={`${t.type}:${t.id}`}>{t.label}</option>
+                    ))}
+                  </select>
+                )}
               </div>
             );
           })}

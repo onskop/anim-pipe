@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
-import type { ComfyModels, Settings as TSettings, TestLLMResult } from "./types";
+import type { ComfyModels, Settings as TSettings, TestLLMResult, WorkflowInfo } from "./types";
 
 const START_CMD =
   "cd C:\\Projects\\dev\\nime\\anim-pipe\\backend; uvicorn app.main:app --reload --port 8000";
@@ -15,6 +15,7 @@ export default function Settings({
   const [online, setOnline] = useState(true);
   const [s, setS] = useState<TSettings | null>(null);
   const [comfy, setComfy] = useState<ComfyModels | null>(null);
+  const [workflows, setWorkflows] = useState<WorkflowInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [test, setTest] = useState<TestLLMResult | null>(null);
@@ -27,6 +28,7 @@ export default function Settings({
     if (!up) return;
     setS(await api.settings());
     api.comfyModels().then(setComfy).catch(() => setComfy(null));
+    api.workflows().then(setWorkflows).catch(() => setWorkflows([]));
   };
 
   useEffect(() => {
@@ -88,6 +90,36 @@ export default function Settings({
       {children}
     </div>
   );
+
+  // Per-role workflow picker: lists templates on disk and shows which logical
+  // fields each one exposes (auto-detected) + the model files it references.
+  const wfPicker = (
+    label: string,
+    key: "workflow_image" | "workflow_loop" | "workflow_transition",
+    role: "image" | "video",
+  ): ReactNode => {
+    if (!s) return null;
+    const cur = workflows.find((w) => w.name === s[key]);
+    const opts = workflows.filter((w) => w.role === role);
+    return (
+      <Field label={label}>
+        <select value={s[key]} onChange={(e) => set(key, e.target.value)}>
+          {!workflows.some((w) => w.name === s[key]) && (
+            <option value={s[key]}>{s[key]} (not found)</option>
+          )}
+          {opts.map((w) => (
+            <option key={w.name} value={w.name}>{w.name}</option>
+          ))}
+        </select>
+        {cur && (
+          <div className="muted" style={{ fontSize: 11, marginTop: 1 }}>
+            drives: {cur.fields.join(", ") || "—"}
+            {cur.models.length > 0 && ` · refs: ${cur.models.join(", ")}`}
+          </div>
+        )}
+      </Field>
+    );
+  };
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -174,6 +206,20 @@ export default function Settings({
               )}
             </Field>
 
+            <h2>Workflows (ComfyUI templates)</h2>
+            <div className="muted" style={{ marginBottom: 6, fontSize: 11 }}>
+              Drop a ComfyUI <b>API-format</b> export into{" "}
+              <code>backend/app/providers/workflows/</code> and pick it here. The app writes
+              prompt/seed/size/start-end into nodes it recognises by title, input name, or type —
+              it never rewires your graph. Name key nodes (e.g. <code>seed</code>,{" "}
+              <code>start_image</code>) to help auto-detection.
+            </div>
+            <div className="stack" style={{ gap: 8 }}>
+              {wfPicker("image (keyframes)", "workflow_image", "image")}
+              {wfPicker("loop (idle clip)", "workflow_loop", "video")}
+              {wfPicker("transition (A→B clip)", "workflow_transition", "video")}
+            </div>
+
             <h2>OpenRouter (prompt expand + AI triage)</h2>
             <Field label="base url">
               <input value={s.openrouter_base_url} onChange={(e) => set("openrouter_base_url", e.target.value)} />
@@ -194,6 +240,24 @@ export default function Settings({
                 <input value={s.llm_vision_model} onChange={(e) => set("llm_vision_model", e.target.value)} />
               </Field>
             </div>
+            <Field label="triage / scoring prompt — sent to the vision model">
+              <textarea
+                rows={5}
+                value={s.llm_triage_prompt}
+                onChange={(e) => set("llm_triage_prompt", e.target.value)}
+              />
+            </Field>
+            <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+              Must instruct the model to return JSON with at least <code>overall</code> (0–1) and{" "}
+              <code>verdict</code> — those drive the gallery score &amp; sort. Keep the JSON keys or scores fall back to 0.5.
+            </div>
+            <Field label="prompt-expand instructions — sent to the text model">
+              <textarea
+                rows={3}
+                value={s.llm_expand_prompt}
+                onChange={(e) => set("llm_expand_prompt", e.target.value)}
+              />
+            </Field>
             <div className="row" style={{ marginTop: 8 }}>
               <button onClick={runTest} disabled={busy}>Test LLM</button>
               {test && (

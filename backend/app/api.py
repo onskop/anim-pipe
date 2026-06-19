@@ -15,10 +15,11 @@ from .models import Asset, Character, Edge, GenerationJob, Graph, Node, Project
 from .providers import get_llm_provider
 from .providers import comfyui as comfyui_provider
 from .schemas import (
-    AssetOut, CharacterIn, CharacterOut, ComfyModels, EditRequest, EdgeIn, EdgeOut,
-    ExpandRequest, GenerateRequest, GraphCreate, GraphInfo, GraphMeta, GraphOut,
-    GraphRename, JobOut, NodeIn, NodeOut, ProjectCreate, ProjectOut, ProviderStatus,
-    ScenarioRequest, SettingsOut, SettingsPatch, TestLLMResult, TriageUpdate,
+    AssetCopyRequest, AssetOut, CharacterIn, CharacterOut, ComfyModels, EditRequest,
+    EdgeIn, EdgeOut, ExpandRequest, GenerateRequest, GraphCreate, GraphInfo, GraphMeta,
+    GraphOut, GraphRename, JobOut, NodeIn, NodeOut, ProjectCreate, ProjectOut,
+    ProjectPatch, ProviderStatus, ScenarioRequest, SettingsOut, SettingsPatch,
+    TestLLMResult, TriageUpdate, WorkflowInfo,
 )
 
 router = APIRouter(prefix="/api")
@@ -67,8 +68,11 @@ def _settings_out() -> SettingsOut:
         image_provider=s.image_provider, video_provider=s.video_provider,
         upscale_provider=s.upscale_provider, llm_provider=s.llm_provider,
         comfyui_url=s.comfyui_url, upscale_model=s.upscale_model,
+        workflow_image=s.workflow_image, workflow_loop=s.workflow_loop,
+        workflow_transition=s.workflow_transition,
         openrouter_base_url=s.openrouter_base_url, openrouter_api_key=s.openrouter_api_key,
         llm_text_model=s.llm_text_model, llm_vision_model=s.llm_vision_model,
+        llm_expand_prompt=s.llm_expand_prompt, llm_triage_prompt=s.llm_triage_prompt,
         default_candidates=s.default_candidates,
     )
 
@@ -100,6 +104,12 @@ async def test_llm():
 @router.get("/comfyui/models", response_model=ComfyModels)
 async def comfyui_models():
     return ComfyModels(**await comfyui_provider.list_models())
+
+
+@router.get("/workflows", response_model=list[WorkflowInfo])
+def list_workflows():
+    """Workflow templates on disk + the fields/models each exposes (picker)."""
+    return [WorkflowInfo(**w) for w in comfyui_provider.inspect_workflows()]
 
 
 @router.post("/restart")
@@ -145,10 +155,25 @@ def _graph_contents(db: Session, graph: Graph) -> GraphOut:
             return (None, None, None)
         return (a.thumb_path or a.path, a.path, a.kind)
 
+    def counts(owner_type: str, ids: list[str]) -> dict[str, int]:
+        if not ids:
+            return {}
+        rows = db.execute(
+            select(Asset.owner_id, func.count())
+            .where(Asset.owner_type == owner_type, Asset.owner_id.in_(ids))
+            .group_by(Asset.owner_id)
+        ).all()
+        return {oid: c for oid, c in rows}
+
+    node_counts = counts("node", [n.id for n in nodes])
+    edge_counts = counts("edge", [e.id for e in edges])
+
     for n in nodes:
         n.selected_thumb, n.selected_path, n.selected_kind = selected(n.selected_asset_id)
+        n.asset_count = node_counts.get(n.id, 0)
     for e in edges:
         e.selected_thumb, e.selected_path, e.selected_kind = selected(e.selected_asset_id)
+        e.asset_count = edge_counts.get(e.id, 0)
     return GraphOut(project=p, graph=graph, characters=chars, nodes=nodes, edges=edges)
 
 
@@ -211,9 +236,33 @@ def delete_graph(gid: str, db: Session = Depends(get_db)):
 
 @router.delete("/projects/{pid}")
 def delete_project(pid: str, db: Session = Depends(get_db)):
-    db.delete(_get(db, Project, pid))
+    """Delete a project and everything under it. The ORM cascade handles
+    characters/graphs/nodes/edges, but Assets aren't in that relationship — so
+    drop them explicitly and unlink any file no surviving asset still shares."""
+    proj = _get(db, Project, pid)
+    assets = db.execute(select(Asset).where(Asset.project_id == pid)).scalars().all()
+    paths = {p for a in assets for p in (a.path, a.thumb_path) if p}
+    db.delete(proj)  # cascades characters/graphs/nodes/edges
+    for a in assets:
+        db.delete(a)
     db.commit()
+    for rel in paths:
+        if not db.execute(
+            select(Asset.id).where((Asset.path == rel) | (Asset.thumb_path == rel)).limit(1)
+        ).first():
+            storage.remove_file(rel)
     return {"ok": True}
+
+
+@router.patch("/projects/{pid}", response_model=ProjectOut)
+def update_project(pid: str, body: ProjectPatch, db: Session = Depends(get_db)):
+    p = _get(db, Project, pid)
+    if body.name is not None:
+        p.name = body.name
+    if body.scenario is not None:
+        p.scenario = body.scenario
+    db.commit()
+    return p
 
 
 # --- characters --------------------------------------------------------
@@ -233,6 +282,17 @@ def update_character(cid: str, body: CharacterIn, db: Session = Depends(get_db))
         setattr(ch, k, v)
     db.commit()
     return ch
+
+
+@router.delete("/characters/{cid}")
+def delete_character(cid: str, db: Session = Depends(get_db)):
+    """Delete a character and unassign it from any node that referenced it."""
+    ch = _get(db, Character, cid)
+    for nd in db.execute(select(Node).where(Node.character_id == cid)).scalars():
+        nd.character_id = None
+    db.delete(ch)
+    db.commit()
+    return {"ok": True}
 
 
 # --- nodes -------------------------------------------------------------
@@ -440,7 +500,8 @@ def edit_asset(aid: str, body: EditRequest, db: Session = Depends(get_db)):
         elif body.op == "resize":
             res = editops.resize(data, body.args["width"], body.args["height"])
         elif body.op == "extract_frame":
-            res = editops.extract_frame(data, int(body.args.get("index", 0)))
+            src_ext = a.path.rsplit(".", 1)[-1] if "." in a.path else None
+            res = editops.extract_frame(data, int(body.args.get("index", 0)), ext=src_ext)
         elif body.op == "trim":
             res = editops.trim(data, int(body.args.get("start", 0)), body.args.get("end"))
         else:
@@ -466,6 +527,34 @@ def edit_asset(aid: str, body: EditRequest, db: Session = Depends(get_db)):
         path=rel, thumb_path=storage.make_thumb(rel), sha256=sha, mime=res.mime,
         width=res.width, height=res.height, frames=res.frames, fps=res.fps,
         params={"edit": body.op, **body.args}, parent_asset_id=a.id,
+    )
+    db.add(new)
+    db.commit()
+    return new
+
+
+@router.post("/assets/{aid}/copy", response_model=AssetOut)
+def copy_asset(aid: str, body: AssetCopyRequest, db: Session = Depends(get_db)):
+    """Attach a *copy* of an asset to another node/edge as a candidate.
+
+    Lightweight by design: the new row reuses the source's content-addressed
+    file (no bytes duplicated), so reusing one keyframe as another node's anchor
+    image — or sharing a clip across edges — costs a DB row, not storage. Delete
+    is already share-safe (the file survives while any copy still points at it).
+    `parent_asset_id` records where it came from.
+    """
+    a = _get(db, Asset, aid)
+    if body.owner_type not in ("node", "edge"):
+        raise HTTPException(400, "owner_type must be node|edge")
+    target = _get(db, Node if body.owner_type == "node" else Edge, body.owner_id)
+    if target.project_id != a.project_id:
+        raise HTTPException(400, "target is in a different project")
+    new = Asset(
+        project_id=a.project_id, owner_type=body.owner_type, owner_id=body.owner_id,
+        kind=a.kind, role="copy", status="candidate",
+        path=a.path, thumb_path=a.thumb_path, sha256=a.sha256, mime=a.mime,
+        width=a.width, height=a.height, frames=a.frames, fps=a.fps,
+        params={**(a.params or {}), "copied_from": a.id}, parent_asset_id=a.id,
     )
     db.add(new)
     db.commit()

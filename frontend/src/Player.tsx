@@ -11,6 +11,7 @@
    ============================================================ */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileUrl } from "./api";
+import SceneGraph from "./SceneGraph";
 import { graphToEngine } from "./engine/fromGraph";
 import type { EngineEdge, EngineEvent, EngineGraph } from "./engine/types";
 import { useWalker } from "./engine/useWalker";
@@ -186,6 +187,18 @@ export default function Player({ graph: editorGraph }: { graph: Graph }) {
           />
 
           <div className="playerSide">
+            <div className="panel sceneMapPanel">
+              <div className="plabel">scene map</div>
+              <div className="sceneMap">
+                <SceneGraph
+                  mode="player"
+                  activeEdgeId={snap.edge?.id ?? null}
+                  activeNodeId={snap.node ?? null}
+                  progress={progress}
+                />
+              </div>
+            </div>
+
             <div className="panel">
               <div className="plabel">state</div>
               <div className="hudrow"><span>node</span><b>{nodeLabel}</b></div>

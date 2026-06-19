@@ -1,19 +1,46 @@
 """Deterministic, model-free edit operations on stored assets.
 
-Pillow-only so they run anywhere (no GPU, no ffmpeg) against the formats this
-app produces today: PNG stills and (animated) GIF clips from the mock/ComfyUI
-video path. mp4/webm trimming/frame-extraction needs ffmpeg and raises a clear
-error until that's wired.
-
 Each op takes raw bytes and returns an EditResult the API layer stores as a new
-lineage-linked Asset (parent = the source asset).
+lineage-linked Asset (parent = the source asset). Crop/resize/trim are Pillow-
+only (no GPU). Frame extraction works on stills/animated GIF via Pillow and on
+real video (mp4/webm/mov/...) via ffmpeg — resolved from PATH or the binary
+bundled by the imageio-ffmpeg package, so no manual install is required.
 """
 from __future__ import annotations
 
 import io
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from PIL import Image
+
+# Containers Pillow cannot decode frame-by-frame — route these through ffmpeg.
+VIDEO_EXTS = {"mp4", "webm", "mov", "m4v", "mkv", "avi", "ogv"}
+
+
+def _ffmpeg_exe() -> str:
+    """Locate an ffmpeg binary: settings override -> PATH -> imageio-ffmpeg
+    bundle. Raises a clear error (no silent fake) when none is available."""
+    from .config import get_settings
+
+    configured = get_settings().ffmpeg_path
+    if configured:
+        return configured
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "ffmpeg not found — install it on PATH, set ANIMPIPE_FFMPEG_PATH, "
+            "or `pip install imageio-ffmpeg`"
+        ) from exc
 
 
 @dataclass
@@ -60,12 +87,45 @@ def resize(data: bytes, width: int, height: int) -> EditResult:
     return _png(im)
 
 
-def extract_frame(data: bytes, index: int = 0) -> EditResult:
-    """Pull one frame out of a clip (or the still itself) as a PNG keyframe."""
+def extract_frame(data: bytes, index: int = 0, ext: str | None = None) -> EditResult:
+    """Pull one frame out of a clip (or the still itself) as a PNG keyframe.
+
+    GIF/PNG/WebP go through Pillow; real video containers (mp4/webm/...) go
+    through ffmpeg, selected by ``ext`` (the source asset's file extension).
+    """
+    if ext and ext.lower().lstrip(".") in VIDEO_EXTS:
+        return _extract_frame_video(data, int(index), ext.lower().lstrip("."))
     im = _open(data)
     n = getattr(im, "n_frames", 1)
     im.seek(max(0, min(int(index), n - 1)))
     return _png(im)
+
+
+def _extract_frame_video(data: bytes, index: int, ext: str) -> EditResult:
+    """Decode frame ``index`` from a video container via ffmpeg → PNG bytes."""
+    exe = _ffmpeg_exe()
+    idx = max(0, index)
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / f"in.{ext}"
+        out = Path(td) / "frame.png"
+        src.write_bytes(data)
+        # select=eq(n,idx) grabs exactly that frame index; -frames:v 1 stops
+        # after the first match. The comma in the filter must be backslash-
+        # escaped even as a single argv token (ffmpeg filtergraph syntax).
+        proc = subprocess.run(
+            [exe, "-nostdin", "-y", "-i", str(src),
+             "-vf", f"select=eq(n\\,{idx})", "-frames:v", "1", "-vsync", "0",
+             str(out)],
+            capture_output=True,
+        )
+        if not out.exists() or out.stat().st_size == 0:
+            tail = proc.stderr.decode("utf-8", "replace")[-400:]
+            raise ValueError(
+                f"could not extract frame {idx} (clip may have fewer frames). {tail}"
+            )
+        png = out.read_bytes()
+    im = Image.open(io.BytesIO(png)).convert("RGB")
+    return EditResult(png, "png", "image/png", im.width, im.height)
 
 
 def trim(data: bytes, start: int = 0, end: int | None = None) -> EditResult:

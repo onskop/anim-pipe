@@ -41,6 +41,161 @@ class ComfyUIError(RuntimeError):
     pass
 
 
+# --- workflow field auto-mapping ---------------------------------------------
+# The app drives a workflow by writing the *variable* per-generation values into
+# specific node inputs. Which node input each logical field targets is resolved,
+# in priority order, from:
+#   1. an explicit ``_animpipe.patch`` map in the template (full manual control),
+#   2. a ComfyUI node *title* matching a logical field (set titles in the editor),
+#   3. an input *key name* matching a logical field (great for grouped/packaged
+#      nodes whose widgets are already named width/height/noise_seed/…),
+#   4. type heuristics for the standard nodes (KSampler, EmptyLatent, LoadImage…).
+# A field may resolve to several node inputs (e.g. one seed feeding both experts
+# of a Wan2.2 high/low-noise pair) — all of them get written.
+
+# logical field -> input-key / title aliases it answers to (normalised)
+FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "positive": ("positive", "positive_prompt", "pos_prompt"),
+    "negative": ("negative", "negative_prompt", "neg_prompt"),
+    "seed": ("seed", "noise_seed", "rand_seed"),
+    "steps": ("steps", "sampling_steps"),
+    "cfg": ("cfg", "cfg_scale", "guidance", "guidance_scale"),
+    "width": ("width",),
+    "height": ("height",),
+    "checkpoint": ("ckpt_name", "checkpoint"),
+    "frames": ("frames", "length", "video_frames", "num_frames", "video_length"),
+    "duration": ("duration", "seconds", "length_seconds"),
+    "fps": ("fps", "frame_rate"),
+    "motion_scale": ("motion_scale", "motion_bucket_id", "motion"),
+    "start_image": ("start_image", "first_frame", "start", "first_image"),
+    "end_image": ("end_image", "last_frame", "end", "last_image"),
+    "mask": ("mask", "motion_mask"),
+}
+_REV_ALIAS: dict[str, str] = {a: f for f, al in FIELD_ALIASES.items() for a in al}
+
+
+def _norm(s: Any) -> str:
+    return str(s).strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def _is_scalar(v: Any) -> bool:
+    """True for a widget value; False for a ``[node_id, slot]`` connection ref."""
+    return not (isinstance(v, list) and len(v) == 2
+                and isinstance(v[0], str) and isinstance(v[1], int))
+
+
+def build_field_map(doc: dict, want_video: bool) -> dict:
+    """Derive ``{logical_field: [node_id, key] | [[node_id, key], ...]}`` from a
+    workflow's node titles, input names and types (see module note above)."""
+    found: dict[str, list[list[str]]] = {}
+
+    def add(field: str, node_id: str, key: str, front: bool = False) -> None:
+        tgt = [node_id, key]
+        bucket = found.setdefault(field, [])
+        if tgt in bucket:
+            if front:
+                bucket.remove(tgt)
+            else:
+                return
+        bucket.insert(0, tgt) if front else bucket.append(tgt)
+
+    nodes = [(nid, n) for nid, n in doc.items() if isinstance(n, dict)]
+
+    # 2/3) input-key-name match (scalar widgets only)
+    for nid, node in nodes:
+        for k, v in (node.get("inputs") or {}).items():
+            field = _REV_ALIAS.get(_norm(k))
+            if field and _is_scalar(v):
+                add(field, nid, k)
+
+    # 2) node-title match wins over a bare key match — front-load it
+    for nid, node in nodes:
+        field = _REV_ALIAS.get(_norm((node.get("_meta") or {}).get("title", "")))
+        if not field:
+            continue
+        inputs = node.get("inputs") or {}
+        key = next((a for a in FIELD_ALIASES[field] if a in inputs and _is_scalar(inputs[a])), None)
+        if key is None:
+            scalars = [k for k, v in inputs.items() if _is_scalar(v)]
+            key = scalars[0] if len(scalars) == 1 else ("value" if "value" in inputs else None)
+        if key is not None:
+            add(field, nid, key, front=True)
+
+    # 4) type heuristics for the standard nodes, only to fill gaps
+    _heuristics(doc, nodes, found, add, want_video)
+
+    return {f: (t[0] if len(t) == 1 else t) for f, t in found.items()}
+
+
+def _heuristics(doc, nodes, found, add, want_video: bool) -> None:
+    for nid, node in nodes:
+        ct = node.get("class_type", "")
+        ins = node.get("inputs") or {}
+        if ct in ("CheckpointLoaderSimple", "ImageOnlyCheckpointLoader") and "checkpoint" not in found:
+            add("checkpoint", nid, "ckpt_name")
+        if ct.startswith("KSampler"):
+            for fld, key in (("seed", "seed"), ("steps", "steps"), ("cfg", "cfg")):
+                if key in ins and fld not in found:
+                    add(fld, nid, key)
+        if "Latent" in ct and ("Empty" in ct or "Hunyuan" in ct):
+            for key in ("width", "height"):
+                if key in ins and key not in found:
+                    add(key, nid, key)
+            if "length" in ins and "frames" not in found:
+                add("frames", nid, "length")
+
+    # positive/negative: trace the first KSampler's conditioning back to CLIP nodes
+    if "positive" not in found or "negative" not in found:
+        for nid, node in nodes:
+            if not node.get("class_type", "").startswith("KSampler"):
+                continue
+            ins = node.get("inputs") or {}
+            for slot in ("positive", "negative"):
+                ref = ins.get(slot)
+                if isinstance(ref, list) and len(ref) == 2 and slot not in found:
+                    tgt = doc.get(ref[0], {})
+                    if tgt.get("class_type") == "CLIPTextEncode" and "text" in (tgt.get("inputs") or {}):
+                        add(slot, ref[0], "text")
+            break
+
+    if want_video:
+        loads = [nid for nid, node in nodes if node.get("class_type") == "LoadImage"]
+        if loads and "start_image" not in found:
+            add("start_image", loads[0], "image")
+        if len(loads) >= 2 and "end_image" not in found:
+            add("end_image", loads[1], "image")
+
+
+def inspect_workflows() -> list[dict]:
+    """List every workflow template with the logical fields the app can drive and
+    the model files it references — powers the Settings workflow picker."""
+    out: list[dict] = []
+    for path in sorted(WORKFLOW_DIR.glob("*.json")):
+        try:
+            doc = json.loads(path.read_text())
+        except Exception:  # noqa: BLE001
+            continue
+        meta = doc.pop("_animpipe", {}) if isinstance(doc, dict) else {}
+        want_video = any(t in path.name for t in ("loop", "flf2v", "video", "i2v", "transition"))
+        fmap = build_field_map(doc, want_video)
+        fmap.update(meta.get("patch", {}))
+        has_se = "start_image" in fmap or "end_image" in fmap
+        models = sorted({
+            v for node in doc.values() if isinstance(node, dict)
+            for k, v in (node.get("inputs") or {}).items()
+            if isinstance(v, str) and v and _norm(v) != "none" and any(
+                t in _norm(k) for t in ("ckpt", "checkpoint", "model_name",
+                                        "vae", "lora", "clip_name", "unet"))
+        })
+        out.append({
+            "name": path.name,
+            "role": "video" if (has_se or want_video) else "image",
+            "fields": sorted(fmap.keys()),
+            "models": models,
+        })
+    return out
+
+
 def _combo_options(spec: Any) -> list[str]:
     """ComfyUI exposes COMBO inputs as either ``[[opt, ...], {meta}]`` (classic)
     or ``["COMBO", {"options": [...]}]`` (newer). Normalise both to a list."""
@@ -99,7 +254,7 @@ class ComfyUIProvider:
 
     # --- public API -----------------------------------------------------
     async def generate_image(self, req: ImageRequest) -> GenAsset:
-        wf, meta = self._load("txt2img_anime.json")
+        wf, meta = self._load(get_settings().workflow_image or "txt2img_anime.json")
         seed = req.seed if req.seed is not None else random.randint(0, 2**31)
         async with httpx.AsyncClient(timeout=600) as http:
             patch = {
@@ -123,7 +278,9 @@ class ComfyUIProvider:
             # Splice out the LoRA / IP-Adapter stack when this character doesn't
             # use it, so the same template runs with or without consistency.
             self._prune_optional(wf, meta.get("optional", {}), set(patch))
-            self._apply(wf, meta.get("patch", {}), patch)
+            field_map = build_field_map(wf, want_video=False)
+            field_map.update(meta.get("patch", {}))  # explicit map overrides auto
+            self._apply(wf, field_map, patch)
             data, ext, mime = await self._run(http, wf)
         return GenAsset(
             data=data, ext=ext, mime=mime, width=req.width, height=req.height,
@@ -131,9 +288,10 @@ class ComfyUIProvider:
         )
 
     async def generate_video(self, req: VideoRequest) -> GenAsset:
-        template = "video_loop.json" if req.kind == "loop" else "video_flf2v.json"
+        s = get_settings()
+        template = (s.workflow_loop or "video_loop.json") if req.kind == "loop" \
+            else (s.workflow_transition or "video_flf2v.json")
         wf, meta = self._load(template)
-        mapping = meta.get("patch", {})
         seed = req.seed if req.seed is not None else random.randint(0, 2**31)
         async with httpx.AsyncClient(timeout=1200) as http:
             patch: dict[str, Any] = {
@@ -141,6 +299,9 @@ class ComfyUIProvider:
                 "negative": req.negative,
                 "seed": seed,
                 "frames": req.frames,
+                # Some Wan/LTX graphs are clip-length-driven; offer both so the
+                # workflow can expose whichever it prefers.
+                "duration": round(req.frames / req.fps, 2) if req.fps else req.frames,
                 "fps": req.fps,
                 "motion_scale": req.motion_scale,
                 "closed_loop": req.closed_loop or req.kind == "loop",
@@ -149,11 +310,16 @@ class ComfyUIProvider:
             }
             if req.start_image:
                 patch["start_image"] = await self._upload(http, req.start_image, "start.png")
-            if req.end_image:
-                patch["end_image"] = await self._upload(http, req.end_image, "end.png")
+            # Seamless loops condition the same frame as first AND last (DreamLoop):
+            # feed the start image into the end slot too when the graph exposes one.
+            end_bytes = req.end_image or (req.start_image if req.kind == "loop" else None)
+            if end_bytes:
+                patch["end_image"] = await self._upload(http, end_bytes, "end.png")
             if req.motion_mask:
                 patch["mask"] = await self._upload(http, req.motion_mask, "mask.png")
-            self._apply(wf, mapping, patch)
+            field_map = build_field_map(wf, want_video=True)
+            field_map.update(meta.get("patch", {}))  # explicit map overrides auto
+            self._apply(wf, field_map, patch)
             data, ext, mime = await self._run(http, wf)
         return GenAsset(
             data=data, ext=ext, mime=mime, width=req.width, height=req.height,
@@ -232,9 +398,12 @@ class ComfyUIProvider:
             target = mapping.get(field)
             if not target:
                 continue  # template doesn't expose this field — skip
-            node_id, input_key = target
-            if node_id in wf:
-                wf[node_id].setdefault("inputs", {})[input_key] = value
+            # target is either [node_id, key] or a list of those (multi-target,
+            # e.g. one seed feeding both Wan high/low-noise samplers).
+            targets = target if target and isinstance(target[0], list) else [target]
+            for node_id, input_key in targets:
+                if node_id in wf:
+                    wf[node_id].setdefault("inputs", {})[input_key] = value
 
     # --- HTTP plumbing --------------------------------------------------
     async def _upload(self, http: httpx.AsyncClient, data: bytes, filename: str) -> str:

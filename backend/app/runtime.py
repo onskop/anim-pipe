@@ -26,10 +26,15 @@ OVERRIDABLE: tuple[str, ...] = (
     "llm_provider",
     "comfyui_url",
     "upscale_model",
+    "workflow_image",
+    "workflow_loop",
+    "workflow_transition",
     "openrouter_api_key",
     "openrouter_base_url",
     "llm_text_model",
     "llm_vision_model",
+    "llm_expand_prompt",
+    "llm_triage_prompt",
     "default_candidates",
 )
 

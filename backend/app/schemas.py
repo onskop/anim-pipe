@@ -25,6 +25,11 @@ class ProjectOut(ORM):
     created_at: dt.datetime
 
 
+class ProjectPatch(BaseModel):
+    name: str | None = None
+    scenario: str | None = None
+
+
 # --- Characters --------------------------------------------------------
 class CharacterIn(BaseModel):
     name: str
@@ -70,6 +75,7 @@ class NodeOut(ORM):
     selected_thumb: str | None = None
     selected_path: str | None = None  # full asset file (still) for the player
     selected_kind: str | None = None  # image|video
+    asset_count: int = 0  # candidate resources attached to this node
     x: float
     y: float
 
@@ -96,6 +102,7 @@ class EdgeOut(ORM):
     selected_thumb: str | None = None
     selected_path: str | None = None  # full clip/still file for the player
     selected_kind: str | None = None  # image|video
+    asset_count: int = 0  # candidate resources attached to this edge
 
 
 # --- Graphs (scenes) ---------------------------------------------------
@@ -182,6 +189,12 @@ class EditRequest(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
 
 
+class AssetCopyRequest(BaseModel):
+    """Attach a copy of an asset to another node/edge."""
+    owner_type: str  # node|edge
+    owner_id: str
+
+
 # --- LLM ---------------------------------------------------------------
 class ExpandRequest(BaseModel):
     brief: str
@@ -210,10 +223,15 @@ class SettingsOut(BaseModel):
     llm_provider: str
     comfyui_url: str
     upscale_model: str
+    workflow_image: str
+    workflow_loop: str
+    workflow_transition: str
     openrouter_base_url: str
     openrouter_api_key: str  # local single-user tool; shown so it's editable
     llm_text_model: str
     llm_vision_model: str
+    llm_expand_prompt: str
+    llm_triage_prompt: str
     default_candidates: int
 
 
@@ -224,10 +242,15 @@ class SettingsPatch(BaseModel):
     llm_provider: str | None = None
     comfyui_url: str | None = None
     upscale_model: str | None = None
+    workflow_image: str | None = None
+    workflow_loop: str | None = None
+    workflow_transition: str | None = None
     openrouter_base_url: str | None = None
     openrouter_api_key: str | None = None
     llm_text_model: str | None = None
     llm_vision_model: str | None = None
+    llm_expand_prompt: str | None = None
+    llm_triage_prompt: str | None = None
     default_candidates: int | None = None
 
 
@@ -237,6 +260,15 @@ class TestLLMResult(BaseModel):
     model: str
     sample: str = ""
     error: str = ""
+
+
+class WorkflowInfo(BaseModel):
+    """A workflow template the app can run, with the logical fields it can drive
+    (auto-detected from titles/inputs/types) and the model files it references."""
+    name: str
+    role: str  # image | video
+    fields: list[str] = Field(default_factory=list)
+    models: list[str] = Field(default_factory=list)
 
 
 class ComfyModels(BaseModel):

@@ -22,6 +22,8 @@ class OpenRouterProvider:
         self.api_key = s.openrouter_api_key
         self.text_model = s.llm_text_model
         self.vision_model = s.llm_vision_model
+        self.expand_sys = s.llm_expand_prompt
+        self.triage_sys = s.llm_triage_prompt
 
     def _headers(self) -> dict[str, str]:
         if not self.api_key:
@@ -43,10 +45,7 @@ class OpenRouterProvider:
             return r.json()["choices"][0]["message"]["content"]
 
     async def expand_prompt(self, brief: str, context: str = "") -> str:
-        sys = (
-            "You write concise, vivid image-generation prompts for an anime/cartoon "
-            "game character. Keep character identity consistent. Return ONLY the prompt."
-        )
+        sys = self.expand_sys
         user = f"Context: {context}\nBrief: {brief}" if context else brief
         return (await self._chat(
             self.text_model,
@@ -56,11 +55,7 @@ class OpenRouterProvider:
 
     async def score_candidate(self, image: bytes, intent: str, kind: str) -> TriageScore:
         b64 = base64.b64encode(image).decode()
-        sys = (
-            "You are a strict art director triaging generated game assets. "
-            "Score 0..1 and return ONLY JSON with keys: overall, character_consistency, "
-            "motion_quality, loop_seamlessness, artifacts, verdict (keep|reject|borderline), notes."
-        )
+        sys = self.triage_sys
         content = [
             {"type": "text", "text": f"Intended {kind}: {intent}. Score this candidate."},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},

@@ -131,6 +131,8 @@ async def _run_video(db: Session, job: GenerationJob) -> None:
         req = VideoRequest(
             kind=kind, prompt=positive, negative=negative,
             start_image=start, end_image=end, motion_mask=mask,
+            # Fallbacks stay conservative (mock-friendly); the editor sends
+            # Wan-friendly values (81f/16fps/720p) for real ComfyUI runs.
             frames=p.get("frames", 25), fps=p.get("fps", 12),
             motion_scale=p.get("motion_scale", 0.6),
             seed=p.get("seed") if job.n == 1 else random.randint(0, 2**31),

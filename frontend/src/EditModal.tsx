@@ -3,6 +3,7 @@
    candidate, then reloads the gallery. */
 import { useRef, useState } from "react";
 import { api, fileUrl } from "./api";
+import { dialog } from "./dialogs";
 import type { Asset } from "./types";
 
 type Box = { x: number; y: number; w: number; h: number };
@@ -35,7 +36,7 @@ export default function EditModal({
       onApplied();
       onClose();
     } catch (e) {
-      alert(`Edit failed: ${e}`);
+      dialog.toast(`Edit failed: ${e}`, "error");
     } finally {
       setBusy(false);
     }
@@ -117,7 +118,7 @@ export default function EditModal({
             )}
             {isMp4 && (
               <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
-                Frame-extract & trim currently support GIF clips; mp4/webm needs ffmpeg (later).
+                Frame extraction works on mp4/webm (via ffmpeg). Trim still supports GIF clips only.
               </div>
             )}
 
@@ -132,12 +133,12 @@ export default function EditModal({
             </div>
             <div className="muted" style={{ fontSize: 11 }}>Lands as a candidate on this edge's target node.</div>
 
-            <div className="plabel" style={{ marginTop: 14 }}>trim (frame range)</div>
+            <div className="plabel" style={{ marginTop: 14 }}>trim (frame range){isMp4 ? " · GIF only" : ""}</div>
             <div className="row">
-              <input type="number" min={0} value={trimStart} onChange={(e) => setTrimStart(+e.target.value)} />
+              <input type="number" min={0} value={trimStart} disabled={isMp4} onChange={(e) => setTrimStart(+e.target.value)} />
               <span className="muted" style={{ flex: 0 }}>→</span>
-              <input type="number" min={1} value={trimEnd} onChange={(e) => setTrimEnd(+e.target.value)} />
-              <button disabled={busy} onClick={() => run("trim", { start: trimStart, end: trimEnd })}>Apply trim</button>
+              <input type="number" min={1} value={trimEnd} disabled={isMp4} onChange={(e) => setTrimEnd(+e.target.value)} />
+              <button disabled={busy || isMp4} onClick={() => run("trim", { start: trimStart, end: trimEnd })}>Apply trim</button>
             </div>
           </>
         )}

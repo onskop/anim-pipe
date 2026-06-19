@@ -43,6 +43,7 @@ export interface GNode {
   selected_thumb: string | null;
   selected_path: string | null;
   selected_kind: string | null;
+  asset_count: number;
   x: number;
   y: number;
 }
@@ -61,6 +62,7 @@ export interface GEdge {
   selected_thumb: string | null;
   selected_path: string | null;
   selected_kind: string | null;
+  asset_count: number;
 }
 
 export interface Graph {
@@ -113,11 +115,23 @@ export interface Settings {
   llm_provider: string;
   comfyui_url: string;
   upscale_model: string;
+  workflow_image: string;
+  workflow_loop: string;
+  workflow_transition: string;
   openrouter_base_url: string;
   openrouter_api_key: string;
   llm_text_model: string;
   llm_vision_model: string;
+  llm_expand_prompt: string;
+  llm_triage_prompt: string;
   default_candidates: number;
+}
+
+export interface WorkflowInfo {
+  name: string;
+  role: "image" | "video";
+  fields: string[];
+  models: string[];
 }
 
 export interface ComfyModels {
