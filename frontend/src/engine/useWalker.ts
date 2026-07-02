@@ -95,8 +95,11 @@ export function useWalker(graph: EngineGraph, onEvent?: (e: EngineEvent) => void
       s.queue.push(edge);
       onEvent?.({ kind: "queued", edge: edge.id, node: s.node ?? "" });
       sync();
+      // If the walker is holding on a dead end (no active edge), a new choice
+      // must wake it — nothing else will call advance().
+      if (!s.edge) advance();
     },
-    [graph, onEvent, sync],
+    [graph, onEvent, sync, advance],
   );
 
   /** Debug: poke a variable live (the HUD's editable bag). */

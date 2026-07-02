@@ -122,6 +122,8 @@ export interface Job {
   target_id?: string;
   provider?: string;
   created_at?: string;
+  /** Request params; export jobs carry the zip name in params.output. */
+  params?: Record<string, unknown>;
 }
 
 export interface Asset {

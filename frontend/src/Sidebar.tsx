@@ -2,7 +2,7 @@
    status footer. Replaces the old crammed sidebar; uses the dialog layer
    instead of browser prompt()/confirm(). */
 import { useEffect, useRef, useState } from "react";
-import { api, fileUrl } from "./api";
+import { api, fileUrl, waitJob } from "./api";
 import { dialog } from "./dialogs";
 import { useStore } from "./store";
 import type { GraphInfo, ProviderStatus } from "./types";
@@ -260,6 +260,48 @@ function CharacterList() {
   );
 }
 
+/* ---------- ship: game bundle export ---------- */
+function ExportSection() {
+  const { projectId } = useStore();
+  const [busy, setBusy] = useState(false);
+  const [prog, setProg] = useState(0);
+
+  const doExport = async () => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    setProg(0);
+    try {
+      const job = await api.exportProject(projectId);
+      const done = await waitJob(job.id, setProg);
+      if (done.status === "error") {
+        dialog.toast(`Export failed: ${done.error}`, "error");
+      } else {
+        const out = done.params?.output as string | undefined;
+        if (out) window.open(`/api/exports/${out}`, "_blank");
+        dialog.toast("Bundle exported ✓", "success");
+      }
+    } catch (e) {
+      dialog.toast(`Export failed: ${e}`, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!projectId) return null;
+  return (
+    <div className="railSection">
+      <div className="railHead"><h3>Ship</h3></div>
+      <button onClick={doExport} disabled={busy}>
+        {busy ? `Exporting… ${Math.round(prog * 100)}%` : "⇪ Export game bundle"}
+      </button>
+      <div className="muted" style={{ fontSize: 11 }}>
+        WebP/WebM keepers + graph.json + a playable reference runtime + the
+        agent compile pack, zipped.
+      </div>
+    </div>
+  );
+}
+
 /* ---------- compact status footer ---------- */
 function StatusFooter({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [providers, setProviders] = useState<ProviderStatus | null>(null);
@@ -315,6 +357,7 @@ export default function Sidebar({
         <ProjectSwitcher />
         {projectId && <SceneList />}
         {projectId && <CharacterList />}
+        <ExportSection />
       </div>
       <StatusFooter onOpenSettings={onOpenSettings} />
     </div>

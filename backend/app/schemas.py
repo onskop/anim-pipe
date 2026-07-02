@@ -176,6 +176,8 @@ class JobOut(ORM):
     cost: float
     error: str | None
     created_at: dt.datetime
+    # Request params; export jobs record the zip name in params["output"].
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class AssetOut(ORM):

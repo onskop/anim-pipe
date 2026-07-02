@@ -155,6 +155,9 @@ export const api = {
   score: (aid: string) => j<Asset>(`/assets/${aid}/score`, { method: "POST" }),
   deleteAsset: (aid: string) => j(`/assets/${aid}`, { method: "DELETE" }),
 
+  // Ship: build the game bundle (job); download via /api/exports/{params.output}.
+  exportProject: (pid: string) => j<Job>(`/projects/${pid}/export`, { method: "POST" }),
+
   expand: (brief: string, context = "") =>
     j<{ prompt: string }>("/llm/expand", { method: "POST", body: JSON.stringify({ brief, context }) }),
 

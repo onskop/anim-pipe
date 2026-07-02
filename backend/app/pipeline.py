@@ -108,6 +108,8 @@ async def run_job(db: Session, job: GenerationJob) -> None:
         await _run_video(db, job)
     elif job.kind == "upscale":
         await _run_upscale(db, job)
+    elif job.kind == "export":
+        await _run_export(db, job)
     else:
         raise ValueError(f"unknown job kind: {job.kind}")
 
@@ -166,6 +168,17 @@ async def _run_image_edit(db: Session, job: GenerationJob) -> None:
         gen.params["source_asset_id"] = src.id
         _persist(db, job, "node", node.id, gen, role="keyframe", parent_id=src.id)
         _progress(db, job, (i + 1) / job.n)
+
+
+async def _run_export(db: Session, job: GenerationJob) -> None:
+    """Build the game bundle (WebP/WebM keepers + graph.json + reference
+    runtime + compile pack) and record the zip name on the job."""
+    from . import export
+
+    zip_name = await export.build_bundle(db, job.target_id,
+                                         lambda f: _progress(db, job, f))
+    job.params = {**(job.params or {}), "output": zip_name}
+    db.flush()
 
 
 async def _run_video(db: Session, job: GenerationJob) -> None:

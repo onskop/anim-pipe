@@ -41,6 +41,7 @@ def _enqueue_job(db: Session, project_id: str, target_type: str, target_id: str,
         "image": s.image_provider, "image_edit": s.edit_provider,
         "video_loop": s.video_provider,
         "video_transition": s.video_provider, "upscale": s.upscale_provider,
+        "export": "local",
     }[kind]
     job = GenerationJob(
         project_id=project_id, target_type=target_type, target_id=target_id,
@@ -420,6 +421,24 @@ def list_jobs(pid: str, db: Session = Depends(get_db)):
         select(GenerationJob).where(GenerationJob.project_id == pid)
         .order_by(GenerationJob.created_at.desc()).limit(100)
     ).scalars().all()
+
+
+# --- export (ship) -------------------------------------------------------
+@router.post("/projects/{pid}/export", response_model=JobOut)
+def export_project(pid: str, db: Session = Depends(get_db)):
+    """Build the game bundle as a queued job; the zip name lands in
+    job.params["output"] and downloads via GET /api/exports/{name}."""
+    _get(db, Project, pid)
+    return _enqueue_job(db, pid, "project", pid, "export", 1, {})
+
+
+@router.get("/exports/{name}")
+def download_export(name: str):
+    d = (get_settings().data_dir / "exports").resolve()
+    fp = (d / name).resolve()
+    if d not in fp.parents or not fp.is_file():
+        raise HTTPException(404, "export not found")
+    return FileResponse(fp, media_type="application/zip", filename=name)
 
 
 # --- prompt preview ----------------------------------------------------
