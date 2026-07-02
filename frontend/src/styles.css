@@ -305,6 +305,11 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: v
 .jobBar { flex: 0 0 70px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .jobBar > span { display: block; height: 100%; background: var(--accent); transition: width .2s linear; }
 
+/* logic editor (conditions / effects / variables rows) */
+.clauseRow { display: flex; gap: 4px; align-items: center; }
+.clauseRow select, .clauseRow input { padding: 4px 6px; font-size: 12px; min-width: 0; }
+.clauseRow button { padding: 3px 8px; font-size: 11px; }
+
 /* assembled-prompt preview */
 .promptPreview { margin-top: 8px; padding: 8px 10px; background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; font-size: 11.5px; line-height: 1.55; }

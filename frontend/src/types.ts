@@ -30,6 +30,42 @@ export interface GraphInfo extends GraphMeta {
   edge_count: number;
 }
 
+/* ---------- gameplay logic (the declarative layer) ---------- */
+export type VarValue = number | boolean;
+
+export interface GameVar {
+  name: string;
+  type: "number" | "bool";
+  default: VarValue;
+  description?: string;
+}
+
+export type ClauseOp = "==" | "!=" | ">" | ">=" | "<" | "<=";
+
+/** One comparison; a condition is the AND of its clauses. */
+export interface Clause {
+  var: string;
+  op: ClauseOp;
+  value: VarValue;
+}
+
+/** Applied when an edge is traversed. */
+export interface Effect {
+  op: "set" | "add";
+  var: string;
+  value: VarValue;
+}
+
+/** Stored in edge.params.logic — absent means a plain ambient (idle) edge. */
+export interface EdgeLogic {
+  type: "idle" | "choice" | "auto";
+  trigger?: string; // button label (choice edges)
+  weight?: number; // idle scheduler weight
+  condition?: Clause[];
+  effects?: Effect[];
+  once?: boolean;
+}
+
 export interface GNode {
   id: string;
   project_id: string;
@@ -46,6 +82,7 @@ export interface GNode {
   asset_count: number;
   x: number;
   y: number;
+  params: Record<string, unknown>;
 }
 
 export interface GEdge {
@@ -63,6 +100,7 @@ export interface GEdge {
   selected_path: string | null;
   selected_kind: string | null;
   asset_count: number;
+  params: Record<string, unknown>;
 }
 
 export interface Graph {

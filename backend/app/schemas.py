@@ -28,6 +28,8 @@ class ProjectOut(ORM):
 class ProjectPatch(BaseModel):
     name: str | None = None
     scenario: str | None = None
+    # Project bag: game variables, style overrides. Sent merged by the client.
+    meta: dict[str, Any] | None = None
 
 
 # --- Characters --------------------------------------------------------
@@ -78,6 +80,8 @@ class NodeOut(ORM):
     asset_count: int = 0  # candidate resources attached to this node
     x: float
     y: float
+    # Free bag: node logic (on-enter effects, dialogue) lives in params["logic"].
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class EdgeIn(BaseModel):
@@ -103,6 +107,8 @@ class EdgeOut(ORM):
     selected_path: str | None = None  # full clip/still file for the player
     selected_kind: str | None = None  # image|video
     asset_count: int = 0  # candidate resources attached to this edge
+    # Free bag: gameplay logic (type/trigger/condition/effects) in params["logic"].
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 # --- Graphs (scenes) ---------------------------------------------------

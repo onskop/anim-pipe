@@ -6,9 +6,10 @@ import { useCallback, useEffect, useState } from "react";
 import { api, fileUrl } from "./api";
 import CharacterEditor from "./CharacterEditor";
 import { dialog } from "./dialogs";
+import { EdgeLogicEditor, VariablesPanel } from "./LogicEditor";
 import MaskPainter from "./MaskPainter";
 import { useStore } from "./store";
-import type { Asset, GEdge, GNode } from "./types";
+import type { Asset, GEdge, GNode, GameVar } from "./types";
 
 export default function Inspector() {
   const { graph, selection, refresh, openTriage, select } = useStore();
@@ -80,6 +81,7 @@ export default function Inspector() {
           for an idle loop. Select a node/edge, then <strong>Edit &amp; generate</strong> to make
           images.
         </p>
+        <VariablesPanel graph={graph} refresh={refresh} />
       </div>
     );
 
@@ -145,6 +147,13 @@ export default function Inspector() {
             <input value={edge!.label || edge!.kind} readOnly style={{ flex: 1 }} />
             <button style={{ flex: "0 0 auto" }} onClick={renameEdge}>Rename</button>
           </div>
+
+          <h2>Logic (gameplay)</h2>
+          <EdgeLogicEditor
+            edge={edge!}
+            vars={(graph.project.meta?.variables as GameVar[] | undefined) ?? []}
+            refresh={refresh}
+          />
 
           <h2>Motion mask (cinemagraph)</h2>
           {srcImg ? (

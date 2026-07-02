@@ -71,7 +71,7 @@ export const api = {
   listProjects: () => j<Project[]>("/projects"),
   createProject: (name: string, scenario = "") =>
     j<Project>("/projects", { method: "POST", body: JSON.stringify({ name, scenario }) }),
-  updateProject: (pid: string, body: { name?: string; scenario?: string }) =>
+  updateProject: (pid: string, body: { name?: string; scenario?: string; meta?: Record<string, unknown> }) =>
     j<Project>(`/projects/${pid}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteProject: (pid: string) => j(`/projects/${pid}`, { method: "DELETE" }),
 

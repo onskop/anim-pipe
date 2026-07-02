@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fileUrl } from "./api";
 import SceneGraph from "./SceneGraph";
 import { graphToEngine } from "./engine/fromGraph";
+import { evalClauses } from "./engine/graph";
 import type { EngineEdge, EngineEvent, EngineGraph } from "./engine/types";
 import { useWalker } from "./engine/useWalker";
 import type { Graph } from "./types";
@@ -142,7 +143,7 @@ export default function Player({ graph: editorGraph }: { graph: Graph }) {
     setLog((l) => [{ ...ev, ts: new Date().toLocaleTimeString() }, ...l].slice(0, 10));
   }, []);
 
-  const { snap, advance, trigger } = useWalker(engineGraph, onEvent);
+  const { snap, advance, trigger, setVar, reset } = useWalker(engineGraph, onEvent);
   const [paused, setPaused] = useState(false);
   const [speed, setSpeed] = useState(1);
   const [progress, setProgress] = useState(0);
@@ -153,15 +154,8 @@ export default function Player({ graph: editorGraph }: { graph: Graph }) {
     setProgress(0);
   }, [engineGraph]);
 
-  const triggers = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          engineGraph.edges
-            .filter((e) => e.type === "interaction" && e.trigger)
-            .map((e) => e.trigger as string),
-        ),
-      ),
+  const choices = useMemo(
+    () => engineGraph.edges.filter((e) => e.type === "interaction" && e.trigger),
     [engineGraph],
   );
 
@@ -218,14 +212,64 @@ export default function Player({ graph: editorGraph }: { graph: Graph }) {
               <div className="progressbar"><div style={{ width: `${progress * 100}%` }} /></div>
             </div>
 
-            {triggers.length > 0 && (
+            {choices.length > 0 && (
               <div className="panel">
-                <div className="plabel">triggers</div>
-                <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
-                  {triggers.map((t) => (
-                    <button key={t} onClick={() => trigger(t)}>{t}</button>
-                  ))}
+                <div className="plabel">choices</div>
+                <div className="stack" style={{ gap: 6 }}>
+                  {choices.map((e) => {
+                    const usable =
+                      (!e.once || !snap.usedIds.includes(e.id)) &&
+                      evalClauses(e.condition, snap.vars);
+                    const queued = snap.queueIds.includes(e.id);
+                    const here = e.from === snap.node;
+                    return (
+                      <button
+                        key={e.id}
+                        className={queued ? "on" : ""}
+                        disabled={!usable || queued}
+                        title={
+                          !usable
+                            ? "condition not met"
+                            : here
+                              ? "plays from the current node"
+                              : "walker routes there via idle edges"
+                        }
+                        onClick={() => e.trigger && trigger(e.trigger)}
+                      >
+                        {e.trigger}
+                        {!here && (
+                          <span className="muted"> · @{engineGraph.nodes[e.from]?.label}</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
+            )}
+
+            {Object.keys(snap.vars).length > 0 && (
+              <div className="panel">
+                <div className="plabel">variables (live — edit to test)</div>
+                {Object.entries(snap.vars).map(([k, v]) => (
+                  <div className="hudrow" key={k}>
+                    <span>{k}</span>
+                    {typeof v === "boolean" ? (
+                      <input
+                        type="checkbox"
+                        style={{ width: "auto" }}
+                        checked={v}
+                        onChange={(e) => setVar(k, e.target.checked)}
+                      />
+                    ) : (
+                      <input
+                        type="number"
+                        style={{ width: 72, padding: "2px 6px" }}
+                        value={v}
+                        onChange={(e) => setVar(k, +e.target.value)}
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
             )}
 
@@ -240,6 +284,9 @@ export default function Player({ graph: editorGraph }: { graph: Graph }) {
                     {s}×
                   </button>
                 ))}
+                <button onClick={reset} title="Restart the run — start node, default variables">
+                  ⟲
+                </button>
               </div>
             </div>
 

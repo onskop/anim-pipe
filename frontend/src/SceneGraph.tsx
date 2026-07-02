@@ -18,7 +18,7 @@ import ReactFlow, {
 import { api, fileUrl } from "./api";
 import { dialog } from "./dialogs";
 import { useStore } from "./store";
-import type { GEdge, GNode, Graph } from "./types";
+import type { EdgeLogic, GEdge, GNode, Graph } from "./types";
 
 const LOOP = "#f0a64a";
 const FLOW = "#6ea8ff";
@@ -141,6 +141,7 @@ function GraphEdge(props: EdgeProps) {
           stroke: color,
           strokeWidth: active || selected ? 3 : 2,
           opacity: dim ? 0.28 : 1,
+          ...(data?.isAuto ? { strokeDasharray: "7 5" } : {}),
           ...(active ? { filter: `drop-shadow(0 0 4px ${color})` } : {}),
         }}
       />
@@ -286,6 +287,10 @@ function buildEdges(
     }
     const active = isPlayer && e.id === activeEdgeId;
     const color = isLoop ? LOOP : FLOW;
+    const logic = (e.params?.logic ?? {}) as EdgeLogic;
+    const glyph =
+      logic.type === "choice" ? "🔘 " : logic.type === "auto" ? "⚡ " : isLoop ? "↻ " : "";
+    const gate = (logic.condition?.length ?? 0) > 0 ? " ‹if›" : "";
     return {
       id: e.id,
       source: e.source_node_id,
@@ -294,7 +299,8 @@ function buildEdges(
       data: {
         isLoop,
         loopIndex,
-        label: `${isLoop ? "↻ " : ""}${e.label || e.kind}`,
+        isAuto: logic.type === "auto",
+        label: `${glyph}${e.label || e.kind}${gate}`,
         rawLabel: e.label || e.kind,
         interactive: !isPlayer,
         active,

@@ -276,6 +276,9 @@ def update_project(pid: str, body: ProjectPatch, db: Session = Depends(get_db)):
         p.name = body.name
     if body.scenario is not None:
         p.scenario = body.scenario
+    if body.meta is not None:
+        # Client sends the merged bag (variables, style overrides, …).
+        p.meta = body.meta
     db.commit()
     return p
 
@@ -323,7 +326,8 @@ def create_node(gid: str, body: NodeIn, db: Session = Depends(get_db)):
 @router.patch("/nodes/{nid}", response_model=NodeOut)
 def update_node(nid: str, body: dict, db: Session = Depends(get_db)):
     n = _get(db, Node, nid)
-    for k in ("key", "title", "prompt", "negative_prompt", "character_id", "x", "y"):
+    for k in ("key", "title", "prompt", "negative_prompt", "character_id", "x", "y",
+              "params"):
         if k in body:
             setattr(n, k, body[k])
     db.commit()
@@ -355,7 +359,7 @@ def create_edge(gid: str, body: EdgeIn, db: Session = Depends(get_db)):
 @router.patch("/edges/{eid}", response_model=EdgeOut)
 def update_edge(eid: str, body: dict, db: Session = Depends(get_db)):
     e = _get(db, Edge, eid)
-    for k in ("kind", "label", "prompt", "motion_mask_id"):
+    for k in ("kind", "label", "prompt", "motion_mask_id", "params"):
         if k in body:
             setattr(e, k, body[k])
     db.commit()
