@@ -293,7 +293,7 @@ All edits are lineage-tracked new assets (never destructive).
   bundle/
     graph.json          # schema-versioned: scenes, nodes, edges, logic,
                         # variables, dialogue — the machine-readable spec
-    assets/             # keepers only, upscaled, web codecs (webm/mp4, webp)
+    assets/             # keepers only, upscaled — WebM video + WebP images
     characters.json     # anchors + ref image paths
     instructions.md     # project brief + per-node/edge notes fields compiled
                         # into one agent-readable design doc
@@ -305,8 +305,9 @@ All edits are lineage-tracked new assets (never destructive).
   (b) the semantic ground truth the agent must not break.
 - **Compile pack generator**: produces the agent prompt — "here is graph.json
   (the contract), the reference runtime (the semantics), instructions.md (the
-  polish wishes); build the final game as <template: static HTML5 / React
-  app>". Anything beyond the declarative layer (meters, timers, minigames,
+  polish wishes); build the final game as a **static HTML5 single-page app**
+  (the one blessed template — no build step, trivially verifiable, runs from a
+  folder)". Anything beyond the declarative layer (meters, timers, minigames,
   save/load, menus, audio mixing) lives in instructions.md and is the agent's
   job, verified by the human against the reference runtime.
 - Re-export is cheap and repeatable → iterate assets/logic in the studio,
@@ -315,12 +316,17 @@ All edits are lineage-tracked new assets (never destructive).
 ### I. Providers (cloud-first, everything swappable)
 | Capability | Cloud default | Local option | Notes |
 |---|---|---|---|
-| Image gen | fal.ai / Replicate / Gemini / OpenAI images | ComfyUI adapter (template+patch-map pattern) | pick per project |
-| Image edit | instruction-edit model (nano-banana class) | ComfyUI inpaint | the consistency workhorse |
-| Video | Kling / Veo / Wan 2.5 / LTX-2 via API — **must support first+last frame conditioning**; loop = first==last | ComfyUI (Wan/AnimateDiff) | motion masks only where supported; ping-pong fallback |
-| Upscale | Replicate ESRGAN / provider-native | ComfyUI ESRGAN | keepers only |
+| Image gen | **fal.ai** (first adapter; Replicate/Gemini/OpenAI later) | ComfyUI adapter (template+patch-map pattern) | pick per project |
+| Image edit | **fal.ai** instruction-edit endpoint (Kontext / nano-banana class) | ComfyUI inpaint | the consistency workhorse |
+| Video | **fal.ai** FLF endpoints (Wan / Kling / LTX) — **must support first+last frame conditioning**; loop = first==last | ComfyUI (Wan/AnimateDiff) | motion masks only where supported; ping-pong fallback |
+| Upscale | **fal.ai** ESRGAN endpoint | ComfyUI ESRGAN | keepers only |
 | LLM | OpenRouter (text + vision) | any OpenAI-compatible | copilot, art director, scenario→graph |
 | Mock | built-in, no keys | — | full app runs offline; powers tests |
+
+The **ComfyUI local adapter is a first-class peer, not a legacy fallback**: it
+covers models and content that cloud APIs won't serve and gives
+zero-marginal-cost prototyping on local hardware. The template+patch-map
+pattern ports over unchanged.
 
 Adapter contract unchanged from anim-pipe: neutral request in, bytes+metadata
 out, cost reported. Adding a provider touches one file.
@@ -365,7 +371,7 @@ out, cost reported. Adding a provider touches one file.
 
 | Phase | Scope | Exit criterion |
 |---|---|---|
-| **1. Core studio** | Shell, projects/scenes/characters, graph editor, image gen (cloud + mock), triage grid + AI score, lineage, upscale, SSE jobs | Lock keyframes for a 6-node scene end-to-end |
+| **1. Core studio** | Shell, projects/scenes/characters, graph editor, image gen + image-edit derive (fal.ai + ComfyUI + mock), triage grid + AI score, lineage, upscale, SSE jobs | Lock keyframes for a 6-node scene end-to-end |
 | **2. Video** | Transition (FLF) + loop generation via cloud API, deterministic edit ops, mask painter, ping-pong, hover-scrub triage for video | Every edge of the scene has a locked clip |
 | **3. Logic + player** | Variables, edge logic types, condition/effect builder, preview player with debug HUD, validation overlay | The scene is playable with choices in-editor |
 | **4. Ship** | Bundle export, reference runtime, compile pack generator | Agent-built game runs from an exported bundle |
@@ -411,12 +417,26 @@ plays correctly in the studio" is a meaningful promise about the final game.
 
 ---
 
-## 8. Open questions
+## 8. Decisions (settled 2026-07-02)
 
-- Bundle codec/targets: webm-only vs webm+mp4 double-encode (Safari)?
-- Should the compile pack offer multiple game templates (static HTML5, React,
-  Ren'Py-style VN) at launch, or one blessed template first? (Lean: one.)
-- Audio: out of scope for v1, but the Asset model should reserve
-  `kind=audio` so per-node ambience/VO can attach later without migration.
-- Multi-character scenes (two anchors in one prompt): v1 supports one character
-  per node + notes; revisit after consistency tooling proves out.
+1. **Bundle codec: WebM only.** Target is modern evergreen browsers; smallest
+   bundles, single encode. Export is automated ffmpeg, so adding an MP4
+   fallback later is a flag, not a redesign.
+2. **One blessed game template: static HTML5 single-page.** No build step,
+   easiest for the compile agent to get right, trivially verifiable against
+   the reference runtime. More templates only after the pipeline proves out.
+3. **Audio: schema reservation only in v1.** `kind=audio` in the Asset model +
+   a slot in graph.json so ambience/VO attach later without migration. No
+   audio UI; final-game audio is the compile agent's job via instructions.md.
+4. **Multi-character: one bound character per node in v1.** Extra characters
+   are described in the node prompt/notes. Revisit once single-character
+   consistency proves out (likely via image-edit compositing).
+5. **Stack: keep FastAPI + SQLite backend, evolve it in place; frontend
+   rebuilt clean** (React + Vite + React Flow 12 + Zustand + TanStack Query),
+   porting proven internals (walker engine, SceneGraph geometry, mask painter,
+   triage grid) rather than rewriting them blind.
+6. **Repo: this repo, in place.** Old frontend stays in git history.
+7. **Providers: fal.ai is the first cloud adapter** (image gen, instruction
+   edit, FLF video, upscale under one key). **ComfyUI local stays first-class**
+   — needed for models/content cloud APIs won't serve and for cheap local
+   prototyping. Mock always ships and powers tests.
