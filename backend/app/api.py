@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import editops, events, queue, runtime, storage
+from . import editops, events, pipeline, queue, runtime, storage
 from .config import get_settings
 from .db import get_db
 from .models import Asset, Character, Edge, GenerationJob, Graph, Node, Project
@@ -18,8 +18,9 @@ from .schemas import (
     AssetCopyRequest, AssetOut, CharacterIn, CharacterOut, ComfyModels, DeriveRequest,
     EditRequest, EdgeIn, EdgeOut, ExpandRequest, GenerateRequest, GraphCreate,
     GraphInfo, GraphMeta, GraphOut, GraphRename, JobOut, NodeIn, NodeOut,
-    ProjectCreate, ProjectOut, ProjectPatch, ProviderStatus, ScenarioRequest,
-    SettingsOut, SettingsPatch, TestLLMResult, TriageUpdate, WorkflowInfo,
+    ProjectCreate, ProjectOut, ProjectPatch, PromptPreview, ProviderStatus,
+    ScenarioRequest, SettingsOut, SettingsPatch, TestLLMResult, TriageUpdate,
+    WorkflowInfo,
 )
 
 router = APIRouter(prefix="/api")
@@ -415,6 +416,21 @@ def list_jobs(pid: str, db: Session = Depends(get_db)):
         select(GenerationJob).where(GenerationJob.project_id == pid)
         .order_by(GenerationJob.created_at.desc()).limit(100)
     ).scalars().all()
+
+
+# --- prompt preview ----------------------------------------------------
+@router.get("/{owner_type}/{owner_id}/prompt_preview", response_model=PromptPreview)
+def prompt_preview(owner_type: str, owner_id: str, db: Session = Depends(get_db)):
+    """The exact assembled (positive, negative) prompts generation would send —
+    character anchor + own prompt + style preset, negatives merged."""
+    if owner_type == "node":
+        owner = _get(db, Node, owner_id)
+    elif owner_type == "edge":
+        owner = _get(db, Edge, owner_id)
+    else:
+        raise HTTPException(400, "owner_type must be node|edge")
+    positive, negative = pipeline.preview_prompt(db, owner)
+    return PromptPreview(positive=positive, negative=negative)
 
 
 # --- assets / triage ---------------------------------------------------

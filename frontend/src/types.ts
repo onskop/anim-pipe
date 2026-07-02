@@ -80,6 +80,10 @@ export interface Job {
   cost: number;
   error: string | null;
   kind: string;
+  target_type?: string;
+  target_id?: string;
+  provider?: string;
+  created_at?: string;
 }
 
 export interface Asset {

@@ -67,6 +67,31 @@ def test_derive_from_keyframe(client):
         assert a["params"]["source_asset_id"] == src["id"]
 
 
+def test_prompt_preview(client):
+    pid = client.post("/api/projects", json={"name": "preview"}).json()["id"]
+    gid = client.post(f"/api/projects/{pid}/graphs", json={"name": "Main"}).json()["id"]
+    ch = client.post(f"/api/projects/{pid}/characters",
+                     json={"name": "Yua", "description": "violet eyes, high ponytail"}).json()
+    node = client.post(f"/api/graphs/{gid}/nodes", json={
+        "key": "awake", "prompt": "standing tall, arms crossed",
+        "negative_prompt": "extra fingers", "character_id": ch["id"],
+    }).json()
+
+    p = client.get(f"/api/node/{node['id']}/prompt_preview").json()
+    assert p["positive"].startswith("violet eyes, high ponytail")
+    assert "standing tall, arms crossed" in p["positive"]
+    assert p["negative"].endswith("extra fingers")
+
+    n2 = client.post(f"/api/graphs/{gid}/nodes", json={"key": "wave"}).json()
+    edge = client.post(f"/api/graphs/{gid}/edges", json={
+        "source_node_id": node["id"], "target_node_id": n2["id"],
+        "kind": "transition", "prompt": "turns and waves",
+    }).json()
+    p = client.get(f"/api/edge/{edge['id']}/prompt_preview").json()
+    assert "turns and waves" in p["positive"]
+    assert "violet eyes" in p["positive"]  # source node's character anchor
+
+
 def test_derive_validation(client):
     pid = client.post("/api/projects", json={"name": "derive-val"}).json()["id"]
     gid = client.post(f"/api/projects/{pid}/graphs", json={"name": "Main"}).json()["id"]

@@ -143,6 +143,12 @@ class GenerateRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class PromptPreview(BaseModel):
+    """The final assembled prompts generation would send to the provider."""
+    positive: str
+    negative: str
+
+
 class DeriveRequest(BaseModel):
     """Instruction-edit derive: keyframe candidates from an existing image."""
     source_asset_id: str

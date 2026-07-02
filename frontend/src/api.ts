@@ -118,6 +118,9 @@ export const api = {
   generateEdge: (id: string, n: number, params = {}) =>
     j<Job>(`/edges/${id}/generate`, { method: "POST", body: JSON.stringify({ n, params }) }),
   job: (id: string) => j<Job>(`/jobs/${id}`),
+  jobs: (pid: string) => j<Job[]>(`/projects/${pid}/jobs`),
+  promptPreview: (ownerType: "node" | "edge", id: string) =>
+    j<{ positive: string; negative: string }>(`/${ownerType}/${id}/prompt_preview`),
 
   assets: (ownerType: "node" | "edge", id: string) =>
     j<Asset[]>(`/${ownerType}/${id}/assets`),

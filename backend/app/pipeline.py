@@ -38,6 +38,21 @@ def _character_ctx(db: Session, node: Node | None) -> PromptContext:
     return ctx
 
 
+def preview_prompt(db: Session, owner: Node | Edge) -> tuple[str, str]:
+    """Assembled (positive, negative) exactly as generation would send them —
+    single source of truth for both the runners and the UI preview."""
+    if isinstance(owner, Node):
+        ctx = _character_ctx(db, owner)
+        positive, negative = build_image_prompt(owner.prompt, ctx)
+        if owner.negative_prompt and owner.negative_prompt.strip():
+            negative = f"{negative}, {owner.negative_prompt.strip()}"
+        return positive, negative
+    kind = "loop" if owner.kind == "loop" else "transition"
+    src = db.get(Node, owner.source_node_id)
+    ctx = _character_ctx(db, src)
+    return build_video_prompt(owner.prompt, kind, ctx)
+
+
 def _char_for_node(db: Session, node: Node) -> Character | None:
     return db.get(Character, node.character_id) if node.character_id else None
 
@@ -102,11 +117,7 @@ async def _run_image(db: Session, job: GenerationJob) -> None:
     if not node:
         raise ValueError("node not found")
     ch = _char_for_node(db, node)
-    ctx = _character_ctx(db, node)
-    positive, negative = build_image_prompt(node.prompt, ctx)
-    # Append the node's own negatives to the sensible defaults (if any).
-    if node.negative_prompt and node.negative_prompt.strip():
-        negative = f"{negative}, {node.negative_prompt.strip()}"
+    positive, negative = preview_prompt(db, node)
     p = job.params or {}
     provider = get_image_provider()
     refs = _ref_bytes(db, ch)
@@ -162,9 +173,7 @@ async def _run_video(db: Session, job: GenerationJob) -> None:
     if not edge:
         raise ValueError("edge not found")
     kind = "loop" if job.kind == "video_loop" else "transition"
-    src_node = db.get(Node, edge.source_node_id)
-    ctx = _character_ctx(db, src_node)
-    positive, negative = build_video_prompt(edge.prompt, kind, ctx)
+    positive, negative = preview_prompt(db, edge)
     p = job.params or {}
 
     start = _selected_bytes(db, edge.source_node_id)

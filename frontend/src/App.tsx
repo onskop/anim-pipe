@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { DialogHost } from "./dialogs";
 import Inspector from "./Inspector";
+import JobCenter from "./JobCenter";
 import Player from "./Player";
 import SceneGraph from "./SceneGraph";
 import Settings from "./Settings";
@@ -35,6 +36,7 @@ export default function App() {
             Create or select a project, then a scene, to start building your animation graph.
           </div>
         )}
+        <JobCenter />
       </div>
 
       {mode === "editor" && (

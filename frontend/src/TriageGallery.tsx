@@ -65,6 +65,7 @@ export default function TriageGallery() {
   // derive-from-image (instruction edit) state
   const [deriveFrom, setDeriveFrom] = useState<Asset | null>(null);
   const [instruction, setInstruction] = useState("");
+  const [preview, setPreview] = useState<{ positive: string; negative: string } | null>(null);
 
   const node = triage?.type === "node" ? graph?.nodes.find((n) => n.id === triage.id) : undefined;
   const edge = triage?.type === "edge" ? graph?.edges.find((e) => e.id === triage.id) : undefined;
@@ -85,6 +86,7 @@ export default function TriageGallery() {
     setAnchor(null);
     setDeriveFrom(null);
     setInstruction("");
+    setPreview(null);
     setGp(triage.type === "edge" ? VIDEO_PARAMS : IMAGE_PARAMS);
     load();
     api.providers().then((p) => { setImageProvider(p.image); setVideoProvider(p.video); }).catch(() => {});
@@ -135,6 +137,18 @@ export default function TriageGallery() {
     await load();
   };
 
+  // Shortlist: star the best-scored candidates so the keepers stand out.
+  const starTop = async () => {
+    const top = assets
+      .filter((a) => scoreOf(a) >= 0)
+      .sort((x, y) => scoreOf(y) - scoreOf(x))
+      .slice(0, 3);
+    await Promise.all(top.map((a) => api.triage(a.id, "starred")));
+    await load();
+    setSorted(true);
+    dialog.toast(`Starred top ${top.length} ★`, "success");
+  };
+
   // Wait on a job via the SSE stream (live progress), then reload the gallery.
   const runJob = async (jobId: string, label: string, onDone?: () => void) => {
     setLoading(true);
@@ -178,6 +192,21 @@ export default function TriageGallery() {
     await refresh();
     setSavedFlag(true);
     setTimeout(() => setSavedFlag(false), 1200);
+  };
+
+  // Show the exact assembled prompts generation will send (anchor + prompt +
+  // style). Saves first so the preview reflects the current draft.
+  const togglePreview = async () => {
+    if (preview) {
+      setPreview(null);
+      return;
+    }
+    await savePrompt();
+    try {
+      setPreview(await api.promptPreview(triage.type as "node" | "edge", triage.id));
+    } catch (e) {
+      dialog.toast(`Preview failed: ${e}`, "error");
+    }
   };
 
   const expand = async () => {
@@ -290,11 +319,21 @@ export default function TriageGallery() {
           </>
         )}
         <div className="endRow">
+          <button className={preview ? "on" : ""} onClick={togglePreview}
+            title="Show the final assembled prompt (character anchor + prompt + style)">
+            👁 Final
+          </button>
           <button onClick={savePrompt}>{savedFlag ? "Saved ✓" : "Save"}</button>
           <button onClick={expand} disabled={expanding}>
             {expanding ? "✨ Expanding…" : "✨ Expand"}
           </button>
         </div>
+        {preview && (
+          <div className="promptPreview">
+            <div><b>positive</b>{preview.positive}</div>
+            <div className="neg"><b>negative</b>{preview.negative}</div>
+          </div>
+        )}
 
         {/* generation */}
         <div className="sectionLabel">Generate · {edge ? videoProvider : imageProvider}</div>
@@ -316,6 +355,32 @@ export default function TriageGallery() {
             <button className="xbtn" onClick={() => setAnchor(null)} title="Clear anchor">✕</button>
           </div>
         )}
+
+        {node && !deriveFrom && (() => {
+          const keepers = (graph?.nodes ?? []).filter(
+            (nd) => nd.id !== node.id && nd.selected_asset_id && nd.selected_path && nd.selected_kind === "image",
+          );
+          if (keepers.length === 0) return null;
+          return (
+            <div className="row" style={{ marginTop: 8 }}>
+              <label className="muted" style={{ flex: "0 0 auto" }}>🪄 derive from</label>
+              <select
+                value=""
+                onChange={(e) => {
+                  const nd = keepers.find((x) => x.id === e.target.value);
+                  if (nd?.selected_asset_id && nd.selected_path) {
+                    setDeriveFrom({ id: nd.selected_asset_id, path: nd.selected_path, kind: "image" } as Asset);
+                  }
+                }}
+              >
+                <option value="" disabled>another node's locked keyframe…</option>
+                {keepers.map((nd) => (
+                  <option key={nd.id} value={nd.id}>{nd.title || nd.key}</option>
+                ))}
+              </select>
+            </div>
+          );
+        })()}
 
         {node && deriveFrom && (
           <div className="anchorSlot">
@@ -437,6 +502,9 @@ export default function TriageGallery() {
           >
             {sorted ? "Sorted ▾" : "Sort by score"}
           </button>
+          {scoredCount >= 2 && (
+            <button onClick={starTop} title="Star the top 3 by AI score (shortlist)">★ Top 3</button>
+          )}
         </div>
         {scoreProg && (
           <div className="scoreProg">
@@ -473,6 +541,7 @@ export default function TriageGallery() {
                     <span className="candBadges">
                       {active && <span className="activeBadge">✓ Active</span>}
                       {isAnchor && <span className="anchorBadge">⚓ Anchor</span>}
+                      {a.status === "starred" && <span className="anchorBadge">★</span>}
                     </span>
                     {overall !== undefined && (
                       <span className={`scorePill ${overall >= 0.7 ? "good" : overall < 0.5 ? "bad" : ""}`}>
