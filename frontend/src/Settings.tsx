@@ -158,18 +158,27 @@ export default function Settings({
                 <select value={s.image_provider} onChange={(e) => set("image_provider", e.target.value)}>
                   <option value="mock">mock</option>
                   <option value="comfyui">comfyui</option>
+                  <option value="fal">fal.ai</option>
                 </select>
               </Field>
               <Field label="upscale">
                 <select value={s.upscale_provider} onChange={(e) => set("upscale_provider", e.target.value)}>
                   <option value="mock">mock</option>
                   <option value="comfyui">comfyui</option>
+                  <option value="fal">fal.ai</option>
                 </select>
               </Field>
               <Field label="video">
                 <select value={s.video_provider} onChange={(e) => set("video_provider", e.target.value)}>
                   <option value="mock">mock</option>
                   <option value="comfyui">comfyui</option>
+                  <option value="fal">fal.ai</option>
+                </select>
+              </Field>
+              <Field label="edit (instruction / derive)">
+                <select value={s.edit_provider} onChange={(e) => set("edit_provider", e.target.value)}>
+                  <option value="mock">mock</option>
+                  <option value="fal">fal.ai</option>
                 </select>
               </Field>
               <Field label="llm (intelligence)">
@@ -178,6 +187,34 @@ export default function Settings({
                   <option value="openrouter">openrouter</option>
                 </select>
               </Field>
+            </div>
+
+            <h2>fal.ai (cloud generation)</h2>
+            <Field label="api key">
+              <input
+                type="password"
+                value={s.fal_api_key}
+                placeholder="key id:key secret"
+                onChange={(e) => set("fal_api_key", e.target.value)}
+              />
+            </Field>
+            <div className="grid2">
+              <Field label="image model">
+                <input value={s.fal_model_image} onChange={(e) => set("fal_model_image", e.target.value)} />
+              </Field>
+              <Field label="edit model (derive)">
+                <input value={s.fal_model_edit} onChange={(e) => set("fal_model_edit", e.target.value)} />
+              </Field>
+              <Field label="video model (first/last frame)">
+                <input value={s.fal_model_video} onChange={(e) => set("fal_model_video", e.target.value)} />
+              </Field>
+              <Field label="upscale model">
+                <input value={s.fal_model_upscale} onChange={(e) => set("fal_model_upscale", e.target.value)} />
+              </Field>
+            </div>
+            <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>
+              Model ids are fal endpoint paths (e.g. <code>fal-ai/flux/dev</code>) — swap models
+              without touching code. The video model must support first+last-frame conditioning.
             </div>
 
             <h2>ComfyUI</h2>

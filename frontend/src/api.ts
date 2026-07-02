@@ -1,6 +1,6 @@
 import type {
   Asset, Character, ComfyModels, GEdge, GNode, Graph, GraphInfo, GraphMeta, Job,
-  Project, ProviderStatus, Settings, TestLLMResult, WorkflowInfo,
+  JobEvent, Project, ProviderStatus, Settings, TestLLMResult, WorkflowInfo,
 } from "./types";
 
 const BASE = "/api";
@@ -15,6 +15,56 @@ async function j<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const fileUrl = (path: string) => `${BASE}/files/${path}`;
+
+/* --- SSE job events (one shared connection, /api/events) ---------------- */
+let eventSource: EventSource | null = null;
+const jobListeners = new Set<(e: JobEvent) => void>();
+
+function ensureEvents() {
+  if (eventSource) return;
+  eventSource = new EventSource(`${BASE}/events`);
+  eventSource.onmessage = (m) => {
+    try {
+      const d = JSON.parse(m.data);
+      if (d.type === "job") jobListeners.forEach((fn) => fn(d as JobEvent));
+    } catch {
+      /* ignore malformed frames */
+    }
+  };
+}
+
+/** Subscribe to pushed job snapshots. Returns an unsubscribe function. */
+export function onJobEvent(fn: (e: JobEvent) => void): () => void {
+  ensureEvents();
+  jobListeners.add(fn);
+  return () => jobListeners.delete(fn);
+}
+
+/** Resolve when a job finishes, streaming progress via SSE (with a slow
+    polling safety net in case the stream drops mid-job). */
+export function waitJob(jobId: string, onProgress?: (p: number) => void): Promise<Job> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (j: Job) => {
+      if (settled) return;
+      settled = true;
+      off();
+      window.clearInterval(iv);
+      resolve(j);
+    };
+    const off = onJobEvent((e) => {
+      if (e.id !== jobId) return;
+      onProgress?.(e.progress);
+      if (e.status === "done" || e.status === "error") {
+        api.job(jobId).then(finish).catch(() => {});
+      }
+    });
+    const iv = window.setInterval(async () => {
+      const j = await api.job(jobId).catch(() => null);
+      if (j && (j.status === "done" || j.status === "error")) finish(j);
+    }, 5000);
+  });
+}
 
 export const api = {
   providers: () => j<ProviderStatus>("/providers"),
@@ -59,6 +109,12 @@ export const api = {
 
   generateNode: (id: string, n: number, params = {}) =>
     j<Job>(`/nodes/${id}/generate`, { method: "POST", body: JSON.stringify({ n, params }) }),
+  // Instruction-edit derive: new keyframe candidates from an existing image.
+  deriveNode: (id: string, sourceAssetId: string, instruction: string, n: number, params = {}) =>
+    j<Job>(`/nodes/${id}/derive`, {
+      method: "POST",
+      body: JSON.stringify({ source_asset_id: sourceAssetId, instruction, n, params }),
+    }),
   generateEdge: (id: string, n: number, params = {}) =>
     j<Job>(`/edges/${id}/generate`, { method: "POST", body: JSON.stringify({ n, params }) }),
   job: (id: string) => j<Job>(`/jobs/${id}`),

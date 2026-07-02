@@ -103,16 +103,38 @@ export interface ProviderStatus {
   image: string;
   video: string;
   upscale: string;
+  edit: string;
   llm: string;
   comfyui_url: string;
   openrouter_configured: boolean;
+  fal_configured: boolean;
+}
+
+/** One job snapshot pushed over the SSE stream (/api/events). */
+export interface JobEvent {
+  type: "job";
+  id: string;
+  project_id: string;
+  target_type: string;
+  target_id: string;
+  kind: string;
+  status: Job["status"];
+  progress: number;
+  error: string | null;
+  cost: number;
 }
 
 export interface Settings {
   image_provider: string;
   video_provider: string;
   upscale_provider: string;
+  edit_provider: string;
   llm_provider: string;
+  fal_api_key: string;
+  fal_model_image: string;
+  fal_model_edit: string;
+  fal_model_video: string;
+  fal_model_upscale: string;
   comfyui_url: string;
   upscale_model: string;
   workflow_image: string;
