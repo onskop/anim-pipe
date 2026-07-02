@@ -11,11 +11,22 @@ import random
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import storage
+from . import events, storage
 from .models import Asset, Character, Edge, GenerationJob, Node
 from .prompts import PromptContext, build_image_prompt, build_video_prompt
-from .providers import get_image_provider, get_upscale_provider, get_video_provider
-from .providers.base import GenAsset, ImageRequest, UpscaleRequest, VideoRequest
+from .providers import (
+    get_edit_provider,
+    get_image_provider,
+    get_upscale_provider,
+    get_video_provider,
+)
+from .providers.base import (
+    GenAsset,
+    ImageEditRequest,
+    ImageRequest,
+    UpscaleRequest,
+    VideoRequest,
+)
 
 
 def _character_ctx(db: Session, node: Node | None) -> PromptContext:
@@ -25,6 +36,21 @@ def _character_ctx(db: Session, node: Node | None) -> PromptContext:
         if ch:
             ctx.character_description = ch.description
     return ctx
+
+
+def preview_prompt(db: Session, owner: Node | Edge) -> tuple[str, str]:
+    """Assembled (positive, negative) exactly as generation would send them —
+    single source of truth for both the runners and the UI preview."""
+    if isinstance(owner, Node):
+        ctx = _character_ctx(db, owner)
+        positive, negative = build_image_prompt(owner.prompt, ctx)
+        if owner.negative_prompt and owner.negative_prompt.strip():
+            negative = f"{negative}, {owner.negative_prompt.strip()}"
+        return positive, negative
+    kind = "loop" if owner.kind == "loop" else "transition"
+    src = db.get(Node, owner.source_node_id)
+    ctx = _character_ctx(db, src)
+    return build_video_prompt(owner.prompt, kind, ctx)
 
 
 def _char_for_node(db: Session, node: Node) -> Character | None:
@@ -67,13 +93,23 @@ def _persist(db: Session, job: GenerationJob, owner_type: str, owner_id: str,
     return asset
 
 
+def _progress(db: Session, job: GenerationJob, frac: float) -> None:
+    job.progress = frac
+    db.flush()
+    events.publish_job(job)
+
+
 async def run_job(db: Session, job: GenerationJob) -> None:
     if job.kind == "image":
         await _run_image(db, job)
+    elif job.kind == "image_edit":
+        await _run_image_edit(db, job)
     elif job.kind in ("video_loop", "video_transition"):
         await _run_video(db, job)
     elif job.kind == "upscale":
         await _run_upscale(db, job)
+    elif job.kind == "export":
+        await _run_export(db, job)
     else:
         raise ValueError(f"unknown job kind: {job.kind}")
 
@@ -83,11 +119,7 @@ async def _run_image(db: Session, job: GenerationJob) -> None:
     if not node:
         raise ValueError("node not found")
     ch = _char_for_node(db, node)
-    ctx = _character_ctx(db, node)
-    positive, negative = build_image_prompt(node.prompt, ctx)
-    # Append the node's own negatives to the sensible defaults (if any).
-    if node.negative_prompt and node.negative_prompt.strip():
-        negative = f"{negative}, {node.negative_prompt.strip()}"
+    positive, negative = preview_prompt(db, node)
     p = job.params or {}
     provider = get_image_provider()
     refs = _ref_bytes(db, ch)
@@ -104,8 +136,49 @@ async def _run_image(db: Session, job: GenerationJob) -> None:
         )
         gen = await provider.generate_image(req)
         _persist(db, job, "node", node.id, gen, role="keyframe")
-        job.progress = (i + 1) / job.n
-        db.flush()
+        _progress(db, job, (i + 1) / job.n)
+
+
+async def _run_image_edit(db: Session, job: GenerationJob) -> None:
+    """Instruction-edit derive: new keyframe candidates from an existing image,
+    lineage-linked to the source (the consistency-first alternative to a fresh
+    txt2img roll)."""
+    node = db.get(Node, job.target_id)
+    if not node:
+        raise ValueError("node not found")
+    p = job.params or {}
+    src = db.get(Asset, p.get("source_asset_id") or "")
+    if not src:
+        raise ValueError("source asset not found")
+    instruction = (p.get("instruction") or "").strip()
+    if not instruction:
+        raise ValueError("instruction is required")
+    image = storage.read_bytes(src.path)
+    provider = get_edit_provider()
+    for i in range(job.n):
+        req = ImageEditRequest(
+            image=image,
+            instruction=instruction,
+            negative=p.get("negative", ""),
+            seed=p.get("seed") if job.n == 1 else random.randint(0, 2**31),
+            extra=p.get("extra", {}),
+        )
+        gen = await provider.edit_image(req)
+        gen.params.setdefault("instruction", instruction)
+        gen.params["source_asset_id"] = src.id
+        _persist(db, job, "node", node.id, gen, role="keyframe", parent_id=src.id)
+        _progress(db, job, (i + 1) / job.n)
+
+
+async def _run_export(db: Session, job: GenerationJob) -> None:
+    """Build the game bundle (WebP/WebM keepers + graph.json + reference
+    runtime + compile pack) and record the zip name on the job."""
+    from . import export
+
+    zip_name = await export.build_bundle(db, job.target_id,
+                                         lambda f: _progress(db, job, f))
+    job.params = {**(job.params or {}), "output": zip_name}
+    db.flush()
 
 
 async def _run_video(db: Session, job: GenerationJob) -> None:
@@ -113,9 +186,7 @@ async def _run_video(db: Session, job: GenerationJob) -> None:
     if not edge:
         raise ValueError("edge not found")
     kind = "loop" if job.kind == "video_loop" else "transition"
-    src_node = db.get(Node, edge.source_node_id)
-    ctx = _character_ctx(db, src_node)
-    positive, negative = build_video_prompt(edge.prompt, kind, ctx)
+    positive, negative = preview_prompt(db, edge)
     p = job.params or {}
 
     start = _selected_bytes(db, edge.source_node_id)
@@ -141,8 +212,7 @@ async def _run_video(db: Session, job: GenerationJob) -> None:
         )
         gen = await provider.generate_video(req)
         _persist(db, job, "edge", edge.id, gen, role=kind)
-        job.progress = (i + 1) / job.n
-        db.flush()
+        _progress(db, job, (i + 1) / job.n)
 
 
 async def _run_upscale(db: Session, job: GenerationJob) -> None:
@@ -162,5 +232,4 @@ async def _run_upscale(db: Session, job: GenerationJob) -> None:
     new = _persist(db, job, parent.owner_type or "node", parent.owner_id or "",
                    gen, role="upscaled", parent_id=parent.id)
     new.status = "accepted"
-    job.progress = 1.0
-    db.flush()
+    _progress(db, job, 1.0)

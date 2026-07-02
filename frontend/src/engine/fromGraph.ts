@@ -2,12 +2,13 @@
    Map the editor's Graph (from the backend) into the headless
    EngineGraph the walker/stage consume.
 
-   Phase 0: every editor edge becomes an `idle` edge so the
-   walker roams and we can watch whatever clips exist. Triggers
-   / weights / guards / effects are added to the editor model
-   in later phases and will flow through here.
+   Edges carry their gameplay logic in params.logic (declarative:
+   type / trigger / weight / condition / effects / once); an edge
+   without logic is a plain ambient `idle` edge, so a fresh graph
+   roams exactly like Phase 0. Variables come from the project's
+   declared bag; the walker starts from the scene's start node.
    ============================================================ */
-import type { Graph } from "../types";
+import type { EdgeLogic, GameVar, Graph, VarValue } from "../types";
 import type { EngineEdge, EngineGraph, EngineNode } from "./types";
 
 export function graphToEngine(graph: Graph): EngineGraph {
@@ -23,18 +24,32 @@ export function graphToEngine(graph: Graph): EngineGraph {
   const edges: EngineEdge[] = graph.edges
     // drop edges whose endpoints are missing (defensive)
     .filter((e) => nodes[e.source_node_id] && nodes[e.target_node_id])
-    .map((e) => ({
-      id: e.id,
-      from: e.source_node_id,
-      to: e.target_node_id,
-      type: "idle",
-      trigger: null,
-      weight: 1,
-      clip: e.selected_path || null,
-      clipKind: e.selected_kind || null,
-      label: e.label || e.kind,
-    }));
+    .map((e) => {
+      const logic = (e.params?.logic ?? {}) as EdgeLogic;
+      const type =
+        logic.type === "choice" ? "interaction" : logic.type === "auto" ? "auto" : "idle";
+      return {
+        id: e.id,
+        from: e.source_node_id,
+        to: e.target_node_id,
+        type,
+        trigger: type === "interaction" ? logic.trigger || e.label || e.kind : null,
+        weight: logic.weight ?? 1,
+        condition: logic.condition ?? [],
+        effects: logic.effects ?? [],
+        once: !!logic.once,
+        clip: e.selected_path || null,
+        clipKind: e.selected_kind || null,
+        label: e.label || e.kind,
+      } satisfies EngineEdge;
+    });
 
-  const start = graph.nodes[0]?.id ?? null;
-  return { nodes, edges, start };
+  const declared = (graph.project.meta?.variables as GameVar[] | undefined) ?? [];
+  const variables: Record<string, VarValue> = Object.fromEntries(
+    declared.map((v) => [v.name, v.default]),
+  );
+
+  const startId = graph.graph.start_node_id;
+  const start = startId && nodes[startId] ? startId : graph.nodes[0]?.id ?? null;
+  return { nodes, edges, start, variables };
 }

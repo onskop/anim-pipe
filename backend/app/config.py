@@ -24,9 +24,10 @@ class Settings(BaseSettings):
 
     # --- Provider selection ---------------------------------------------
     # Which adapter backs each capability. "mock" works anywhere.
-    image_provider: str = Field(default="mock")  # mock | comfyui
-    video_provider: str = Field(default="mock")  # mock | comfyui
-    upscale_provider: str = Field(default="mock")  # mock | comfyui
+    image_provider: str = Field(default="mock")  # mock | comfyui | fal
+    video_provider: str = Field(default="mock")  # mock | comfyui | fal
+    upscale_provider: str = Field(default="mock")  # mock | comfyui | fal
+    edit_provider: str = Field(default="mock")  # mock | fal
     llm_provider: str = Field(default="mock")  # mock | openrouter
 
     # --- Local tools ----------------------------------------------------
@@ -44,6 +45,15 @@ class Settings(BaseSettings):
     workflow_image: str = Field(default="txt2img_anime.json")
     workflow_loop: str = Field(default="video_loop.json")
     workflow_transition: str = Field(default="video_flf2v.json")
+
+    # --- fal.ai (cloud generation) ---------------------------------------
+    fal_api_key: str = Field(default="")
+    fal_queue_url: str = Field(default="https://queue.fal.run")
+    # Model endpoints per capability — swap models from Settings without code.
+    fal_model_image: str = Field(default="fal-ai/flux/dev")
+    fal_model_edit: str = Field(default="fal-ai/flux-kontext/dev")
+    fal_model_video: str = Field(default="fal-ai/wan-flf2v")
+    fal_model_upscale: str = Field(default="fal-ai/esrgan")
 
     # --- OpenRouter (swappable "intelligence" line) ---------------------
     openrouter_api_key: str = Field(default="")

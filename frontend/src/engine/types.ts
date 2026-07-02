@@ -15,6 +15,8 @@
    rewrite.
    ============================================================ */
 
+import type { Clause, Effect, VarValue } from "../types";
+
 export type EdgeType = "idle" | "interaction" | "auto";
 
 export interface EngineNode {
@@ -33,6 +35,12 @@ export interface EngineEdge {
   trigger: string | null;
   /** Idle-scheduler weight (defaults to 1). */
   weight: number;
+  /** Guard: AND of clauses over the variable bag; empty = always available. */
+  condition: Clause[];
+  /** Applied to the variable bag when the edge finishes traversing. */
+  effects: Effect[];
+  /** Traversable only once per run. */
+  once: boolean;
   /** Selected clip (file path), or null → stage uses the still fallback. */
   clip: string | null;
   /** Asset kind of the clip: "video" (mp4/webm) | "image" (gif/still) | null. */
@@ -45,11 +53,14 @@ export interface EngineGraph {
   edges: EngineEdge[];
   /** Entry node for the walker; null when the graph has no nodes. */
   start: string | null;
+  /** Variable defaults (from the project's declared variables). */
+  variables: Record<string, VarValue>;
 }
 
 export type EngineEventKind =
   | "idle"
   | "interaction"
+  | "auto"
   | "route"
   | "queued"
   | "hold";
@@ -65,4 +76,6 @@ export interface Traversal {
   node: string | null;
   edge: EngineEdge | null;
   queueIds: string[];
+  vars: Record<string, VarValue>;
+  usedIds: string[];
 }

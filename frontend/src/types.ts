@@ -30,6 +30,42 @@ export interface GraphInfo extends GraphMeta {
   edge_count: number;
 }
 
+/* ---------- gameplay logic (the declarative layer) ---------- */
+export type VarValue = number | boolean;
+
+export interface GameVar {
+  name: string;
+  type: "number" | "bool";
+  default: VarValue;
+  description?: string;
+}
+
+export type ClauseOp = "==" | "!=" | ">" | ">=" | "<" | "<=";
+
+/** One comparison; a condition is the AND of its clauses. */
+export interface Clause {
+  var: string;
+  op: ClauseOp;
+  value: VarValue;
+}
+
+/** Applied when an edge is traversed. */
+export interface Effect {
+  op: "set" | "add";
+  var: string;
+  value: VarValue;
+}
+
+/** Stored in edge.params.logic — absent means a plain ambient (idle) edge. */
+export interface EdgeLogic {
+  type: "idle" | "choice" | "auto";
+  trigger?: string; // button label (choice edges)
+  weight?: number; // idle scheduler weight
+  condition?: Clause[];
+  effects?: Effect[];
+  once?: boolean;
+}
+
 export interface GNode {
   id: string;
   project_id: string;
@@ -46,6 +82,7 @@ export interface GNode {
   asset_count: number;
   x: number;
   y: number;
+  params: Record<string, unknown>;
 }
 
 export interface GEdge {
@@ -63,6 +100,7 @@ export interface GEdge {
   selected_path: string | null;
   selected_kind: string | null;
   asset_count: number;
+  params: Record<string, unknown>;
 }
 
 export interface Graph {
@@ -80,6 +118,12 @@ export interface Job {
   cost: number;
   error: string | null;
   kind: string;
+  target_type?: string;
+  target_id?: string;
+  provider?: string;
+  created_at?: string;
+  /** Request params; export jobs carry the zip name in params.output. */
+  params?: Record<string, unknown>;
 }
 
 export interface Asset {
@@ -103,16 +147,38 @@ export interface ProviderStatus {
   image: string;
   video: string;
   upscale: string;
+  edit: string;
   llm: string;
   comfyui_url: string;
   openrouter_configured: boolean;
+  fal_configured: boolean;
+}
+
+/** One job snapshot pushed over the SSE stream (/api/events). */
+export interface JobEvent {
+  type: "job";
+  id: string;
+  project_id: string;
+  target_type: string;
+  target_id: string;
+  kind: string;
+  status: Job["status"];
+  progress: number;
+  error: string | null;
+  cost: number;
 }
 
 export interface Settings {
   image_provider: string;
   video_provider: string;
   upscale_provider: string;
+  edit_provider: string;
   llm_provider: string;
+  fal_api_key: string;
+  fal_model_image: string;
+  fal_model_edit: string;
+  fal_model_video: string;
+  fal_model_upscale: string;
   comfyui_url: string;
   upscale_model: string;
   workflow_image: string;

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>anim-pipe bundle</title>
+<style>
+  :root { --bg:#14161c; --panel:#1c1f29; --line:#333949; --text:#e6e8ee;
+          --muted:#9aa1b2; --accent:#6ea8ff; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; grid-template-columns: 1fr 280px; font: 14px/1.4 ui-sans-serif, system-ui, sans-serif;
+         background: var(--bg); color: var(--text); }
+  #stage { position: relative; display: flex; align-items: center; justify-content: center;
+           background: radial-gradient(ellipse at 50% 80%, #20242f 0%, #121319 70%); overflow: hidden; }
+  #stage img, #stage video { max-width: 100%; max-height: 100vh; object-fit: contain; }
+  #stage .empty { color: var(--muted); padding: 32px; text-align: center; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); padding: 14px;
+          display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+  h1 { font-size: 14px; margin: 0; }
+  .plabel { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+  .panel { background: #242836; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  button { display: block; width: 100%; margin-bottom: 6px; background: #242836; color: var(--text);
+           border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; cursor: pointer; text-align: left; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  #restart { text-align: center; }
+  .varRow { display: flex; justify-content: space-between; padding: 2px 0; color: var(--muted); }
+  .varRow b { color: var(--text); }
+  #where { color: var(--accent); }
+  #dialogue { min-height: 2.6em; font-style: italic; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <aside>
+    <h1 id="title">…</h1>
+    <div class="panel"><div class="plabel">at</div><div id="where">—</div>
+      <div id="dialogue"></div></div>
+    <div class="panel"><div class="plabel">choices</div><div id="choices"></div></div>
+    <div class="panel"><div class="plabel">state</div><div id="vars"></div></div>
+    <button id="restart">⟲ restart</button>
+  </aside>
+  <script src="runtime.js"></script>
+</body>
+</html>

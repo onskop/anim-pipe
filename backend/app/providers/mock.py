@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .base import (
     GenAsset,
+    ImageEditRequest,
     ImageRequest,
     TriageScore,
     UpscaleRequest,
@@ -67,6 +68,29 @@ class MockProvider:
             width=req.width,
             height=req.height,
             params={"seed": seed, "model": "mock", "prompt": req.prompt},
+            cost=0.0,
+        )
+
+    async def edit_image(self, req: ImageEditRequest) -> GenAsset:
+        await asyncio.sleep(0.05)
+        seed = req.seed if req.seed is not None else random.randint(0, 2**31)
+        im = self._load(req.image) or _card("SRC", 768, 768, (80, 80, 80))
+        # Deterministic visible tweak: tint from the instruction + stamp it, so
+        # the derived candidate is clearly the source image with a change.
+        tint = Image.new("RGB", im.size, _color_from(f"{req.instruction}:{seed}"))
+        im = Image.blend(im, tint, 0.25)
+        d = ImageDraw.Draw(im)
+        d.text((6, 6), f"EDIT seed={seed} :: {req.instruction[:80]}",
+               fill=(255, 255, 0), font=_font())
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+        return GenAsset(
+            data=buf.getvalue(),
+            ext="png",
+            mime="image/png",
+            width=im.width,
+            height=im.height,
+            params={"seed": seed, "model": "mock-edit", "instruction": req.instruction},
             cost=0.0,
         )
 

@@ -9,7 +9,7 @@
    anchoring a card seeds the generator with that image's recipe and produces
    fresh variations. */
 import { useEffect, useState } from "react";
-import { api, fileUrl } from "./api";
+import { api, fileUrl, waitJob } from "./api";
 import { dialog } from "./dialogs";
 import EditModal from "./EditModal";
 import { useStore } from "./store";
@@ -61,6 +61,11 @@ export default function TriageGallery() {
   const [gp, setGp] = useState<GenParams>(IMAGE_PARAMS);
   const [showSettings, setShowSettings] = useState(false);
   const [anchor, setAnchor] = useState<Asset | null>(null);
+  const [prog, setProg] = useState<number | null>(null);
+  // derive-from-image (instruction edit) state
+  const [deriveFrom, setDeriveFrom] = useState<Asset | null>(null);
+  const [instruction, setInstruction] = useState("");
+  const [preview, setPreview] = useState<{ positive: string; negative: string } | null>(null);
 
   const node = triage?.type === "node" ? graph?.nodes.find((n) => n.id === triage.id) : undefined;
   const edge = triage?.type === "edge" ? graph?.edges.find((e) => e.id === triage.id) : undefined;
@@ -79,6 +84,9 @@ export default function TriageGallery() {
     setSorted(false);
     setCopyFor(null);
     setAnchor(null);
+    setDeriveFrom(null);
+    setInstruction("");
+    setPreview(null);
     setGp(triage.type === "edge" ? VIDEO_PARAMS : IMAGE_PARAMS);
     load();
     api.providers().then((p) => { setImageProvider(p.image); setVideoProvider(p.video); }).catch(() => {});
@@ -129,18 +137,36 @@ export default function TriageGallery() {
     await load();
   };
 
-  const pollThenLoad = (jobId: string, label: string, onDone?: () => void) => {
-    setLoading(true);
-    const tick = async () => {
-      const j = await api.job(jobId);
-      if (j.status === "done") { await load(); await refresh(); onDone?.(); }
-      else if (j.status === "error") { setLoading(false); onDone?.(); dialog.toast(`${label} failed: ${j.error}`, "error"); }
-      else setTimeout(tick, 800);
-    };
-    setTimeout(tick, 800);
+  // Shortlist: star the best-scored candidates so the keepers stand out.
+  const starTop = async () => {
+    const top = assets
+      .filter((a) => scoreOf(a) >= 0)
+      .sort((x, y) => scoreOf(y) - scoreOf(x))
+      .slice(0, 3);
+    await Promise.all(top.map((a) => api.triage(a.id, "starred")));
+    await load();
+    setSorted(true);
+    dialog.toast(`Starred top ${top.length} ★`, "success");
   };
 
-  const upscale = async (a: Asset) => pollThenLoad((await api.upscale(a.id, { scale: 2 })).id, "Upscale");
+  // Wait on a job via the SSE stream (live progress), then reload the gallery.
+  const runJob = async (jobId: string, label: string, onDone?: () => void) => {
+    setLoading(true);
+    setProg(0);
+    const j = await waitJob(jobId, setProg);
+    setProg(null);
+    if (j.status === "error") {
+      setLoading(false);
+      onDone?.();
+      dialog.toast(`${label} failed: ${j.error}`, "error");
+      return;
+    }
+    await load();
+    await refresh();
+    onDone?.();
+  };
+
+  const upscale = async (a: Asset) => runJob((await api.upscale(a.id, { scale: 2 })).id, "Upscale");
 
   // Anchor a candidate: prime the generator with its recipe so the next
   // Generate yields fresh variations of that image (toggles off if re-picked).
@@ -166,6 +192,21 @@ export default function TriageGallery() {
     await refresh();
     setSavedFlag(true);
     setTimeout(() => setSavedFlag(false), 1200);
+  };
+
+  // Show the exact assembled prompts generation will send (anchor + prompt +
+  // style). Saves first so the preview reflects the current draft.
+  const togglePreview = async () => {
+    if (preview) {
+      setPreview(null);
+      return;
+    }
+    await savePrompt();
+    try {
+      setPreview(await api.promptPreview(triage.type as "node" | "edge", triage.id));
+    } catch (e) {
+      dialog.toast(`Preview failed: ${e}`, "error");
+    }
   };
 
   const expand = async () => {
@@ -200,13 +241,31 @@ export default function TriageGallery() {
         : node
           ? await api.generateNode(node.id, count, params)
           : await api.generateEdge(edge!.id, count, params);
-      pollThenLoad(job.id, "Generation", () => {
+      runJob(job.id, "Generation", () => {
         setGenBusy(false);
         dialog.toast("Candidates ready ✓", "success");
       });
     } catch (e) {
       setGenBusy(false);
       dialog.toast(`Generation failed: ${e}`, "error");
+    }
+  };
+
+  // Instruction-edit derive: turn an existing image into fresh candidates
+  // ("same framing, but eyes closed") — lineage-linked to the source.
+  const derive = async () => {
+    if (!node || !deriveFrom || !instruction.trim()) return;
+    setGenBusy(true);
+    dialog.toast(`Deriving ${count} candidate${count > 1 ? "s" : ""}…`);
+    try {
+      const job = await api.deriveNode(node.id, deriveFrom.id, instruction, count);
+      runJob(job.id, "Derive", () => {
+        setGenBusy(false);
+        dialog.toast("Derived candidates ready ✓", "success");
+      });
+    } catch (e) {
+      setGenBusy(false);
+      dialog.toast(`Derive failed: ${e}`, "error");
     }
   };
 
@@ -260,17 +319,27 @@ export default function TriageGallery() {
           </>
         )}
         <div className="endRow">
+          <button className={preview ? "on" : ""} onClick={togglePreview}
+            title="Show the final assembled prompt (character anchor + prompt + style)">
+            👁 Final
+          </button>
           <button onClick={savePrompt}>{savedFlag ? "Saved ✓" : "Save"}</button>
           <button onClick={expand} disabled={expanding}>
             {expanding ? "✨ Expanding…" : "✨ Expand"}
           </button>
         </div>
+        {preview && (
+          <div className="promptPreview">
+            <div><b>positive</b>{preview.positive}</div>
+            <div className="neg"><b>negative</b>{preview.negative}</div>
+          </div>
+        )}
 
         {/* generation */}
-        <div className="sectionLabel">Generate {isComfy ? "· ComfyUI" : "· mock"}</div>
-        {!isComfy && (
+        <div className="sectionLabel">Generate · {edge ? videoProvider : imageProvider}</div>
+        {(edge ? videoProvider : imageProvider) === "mock" && (
           <p className="muted" style={{ marginTop: 0 }}>
-            Mock provider — switch the {edge ? "video" : "image"} provider to ComfyUI in ⚙ Settings to use your models.
+            Mock provider — switch the {edge ? "video" : "image"} provider to ComfyUI or fal.ai in ⚙ Settings to use real models.
           </p>
         )}
 
@@ -287,6 +356,53 @@ export default function TriageGallery() {
           </div>
         )}
 
+        {node && !deriveFrom && (() => {
+          const keepers = (graph?.nodes ?? []).filter(
+            (nd) => nd.id !== node.id && nd.selected_asset_id && nd.selected_path && nd.selected_kind === "image",
+          );
+          if (keepers.length === 0) return null;
+          return (
+            <div className="row" style={{ marginTop: 8 }}>
+              <label className="muted" style={{ flex: "0 0 auto" }}>🪄 derive from</label>
+              <select
+                value=""
+                onChange={(e) => {
+                  const nd = keepers.find((x) => x.id === e.target.value);
+                  if (nd?.selected_asset_id && nd.selected_path) {
+                    setDeriveFrom({ id: nd.selected_asset_id, path: nd.selected_path, kind: "image" } as Asset);
+                  }
+                }}
+              >
+                <option value="" disabled>another node's locked keyframe…</option>
+                {keepers.map((nd) => (
+                  <option key={nd.id} value={nd.id}>{nd.title || nd.key}</option>
+                ))}
+              </select>
+            </div>
+          );
+        })()}
+
+        {node && deriveFrom && (
+          <div className="anchorSlot">
+            <img src={fileUrl(deriveFrom.path)} alt="derive source" />
+            <div className="txt" style={{ flex: 1 }}>
+              <b>Derive</b> — instruction-edit this image into new candidates
+              (keeps framing &amp; identity; describe only the change).
+              <input
+                style={{ width: "100%", marginTop: 6 }}
+                value={instruction}
+                placeholder='e.g. "same framing, but eyes closed and head tilted"'
+                onChange={(e) => setInstruction(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") derive(); }}
+              />
+            </div>
+            <button className="primary" disabled={genBusy || !instruction.trim()} onClick={derive}>
+              Derive {count}
+            </button>
+            <button className="xbtn" onClick={() => setDeriveFrom(null)} title="Clear derive source">✕</button>
+          </div>
+        )}
+
         <div className="genRow">
           <label className="muted">count</label>
           <input type="number" min={1} max={16} value={count}
@@ -294,16 +410,16 @@ export default function TriageGallery() {
           <button className="primary grow" disabled={genBusy} onClick={generate}>
             {genBusy ? "Generating…" : anchor ? `Generate ${count} variations` : `Generate ${count}`}
           </button>
-          {isComfy && (
+          {(edge ? videoProvider : imageProvider) !== "mock" && (
             <button onClick={() => setShowSettings((s) => !s)} title="Generation settings">
               ⚙ {showSettings ? "▴" : "▾"}
             </button>
           )}
         </div>
 
-        {showSettings && isComfy && (
+        {showSettings && (edge ? videoProvider : imageProvider) !== "mock" && (
           <div className="stack" style={{ marginTop: 8 }}>
-            {node && (
+            {node && isComfy && (
               <>
                 <label className="muted">checkpoint</label>
                 {comfy?.online && comfy.checkpoints.length > 0 ? (
@@ -386,6 +502,9 @@ export default function TriageGallery() {
           >
             {sorted ? "Sorted ▾" : "Sort by score"}
           </button>
+          {scoredCount >= 2 && (
+            <button onClick={starTop} title="Star the top 3 by AI score (shortlist)">★ Top 3</button>
+          )}
         </div>
         {scoreProg && (
           <div className="scoreProg">
@@ -396,7 +515,9 @@ export default function TriageGallery() {
 
         {busy && (
           <div className="genBanner">
-            <span className="spinner" /> {genBusy ? "Generating candidates…" : "Working…"}
+            <span className="spinner" />{" "}
+            {genBusy ? "Generating candidates…" : "Working…"}
+            {prog !== null && prog > 0 && ` ${Math.round(prog * 100)}%`}
           </div>
         )}
         {!loading && assets.length === 0 && !genBusy && (
@@ -420,6 +541,7 @@ export default function TriageGallery() {
                     <span className="candBadges">
                       {active && <span className="activeBadge">✓ Active</span>}
                       {isAnchor && <span className="anchorBadge">⚓ Anchor</span>}
+                      {a.status === "starred" && <span className="anchorBadge">★</span>}
                     </span>
                     {overall !== undefined && (
                       <span className={`scorePill ${overall >= 0.7 ? "good" : overall < 0.5 ? "bad" : ""}`}>
@@ -439,6 +561,11 @@ export default function TriageGallery() {
                   )}
                   <button className={isAnchor ? "anchorOn" : ""} onClick={() => toggleAnchor(a)}
                     title="Anchor — Generate variations from this image's recipe">⚓</button>
+                  {node && a.kind === "image" && (
+                    <button className={deriveFrom?.id === a.id ? "on" : ""}
+                      onClick={() => setDeriveFrom((d) => (d?.id === a.id ? null : a))}
+                      title="Derive — instruction-edit this image into new candidates">🪄</button>
+                  )}
                   {overall === undefined && (
                     <button className="ai" onClick={() => score(a)} title="AI score this candidate">AI</button>
                   )}

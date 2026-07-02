@@ -10,6 +10,7 @@ import asyncio
 import datetime as dt
 import logging
 
+from . import events
 from .config import get_settings
 from .db import session_scope
 from .models import GenerationJob
@@ -33,6 +34,7 @@ async def _process(job_id: str) -> None:
         job.status = "running"
         job.started_at = dt.datetime.now(dt.timezone.utc)
         db.commit()
+        events.publish_job(job)
         try:
             await run_job(db, job)
             job.status = "done"
@@ -43,6 +45,7 @@ async def _process(job_id: str) -> None:
         finally:
             job.finished_at = dt.datetime.now(dt.timezone.utc)
             db.commit()
+            events.publish_job(job)
 
 
 async def _worker(idx: int) -> None:
@@ -55,8 +58,15 @@ async def _worker(idx: int) -> None:
 
 
 def start_workers() -> None:
-    if _workers:
+    global _queue
+    loop = asyncio.get_running_loop()
+    # Workers (and the queue's waiters) die with the event loop that created
+    # them — e.g. every TestClient lifespan runs a fresh loop. Rebuild instead
+    # of assuming tasks from a previous loop are still alive.
+    if _workers and all(t.get_loop() is loop and not t.done() for t in _workers):
         return
+    _workers.clear()
+    _queue = asyncio.Queue()
     n = max(1, get_settings().max_concurrent_jobs)
     for i in range(n):
         _workers.append(asyncio.create_task(_worker(i)))

@@ -47,6 +47,23 @@ class VideoRequest:
 
 
 @dataclass
+class ImageEditRequest:
+    """Instruction-based edit of an existing image (Kontext / nano-banana class).
+
+    The consistency-first path for keyframes: derive node B's image from node
+    A's locked keeper ("same framing, but she is sitting") instead of a fresh
+    txt2img roll."""
+
+    image: bytes
+    instruction: str
+    negative: str = ""
+    seed: int | None = None  # None -> random per candidate
+    # Optional extra reference images (models that accept multiple inputs).
+    ref_images: list[bytes] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class UpscaleRequest:
     image: bytes | None = None
     video_frames: list[bytes] = field(default_factory=list)
@@ -84,6 +101,11 @@ class TriageScore:
 @runtime_checkable
 class ImageProvider(Protocol):
     async def generate_image(self, req: ImageRequest) -> GenAsset: ...
+
+
+@runtime_checkable
+class ImageEditProvider(Protocol):
+    async def edit_image(self, req: ImageEditRequest) -> GenAsset: ...
 
 
 @runtime_checkable
