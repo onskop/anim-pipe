@@ -143,6 +143,14 @@ class GenerateRequest(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class DeriveRequest(BaseModel):
+    """Instruction-edit derive: keyframe candidates from an existing image."""
+    source_asset_id: str
+    instruction: str
+    n: int | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class JobOut(ORM):
     id: str
     project_id: str
@@ -210,9 +218,11 @@ class ProviderStatus(BaseModel):
     image: str
     video: str
     upscale: str
+    edit: str
     llm: str
     comfyui_url: str
     openrouter_configured: bool
+    fal_configured: bool = False
 
 
 # --- Settings (runtime-editable) --------------------------------------
@@ -220,7 +230,13 @@ class SettingsOut(BaseModel):
     image_provider: str
     video_provider: str
     upscale_provider: str
+    edit_provider: str
     llm_provider: str
+    fal_api_key: str  # local single-user tool; shown so it's editable
+    fal_model_image: str
+    fal_model_edit: str
+    fal_model_video: str
+    fal_model_upscale: str
     comfyui_url: str
     upscale_model: str
     workflow_image: str
@@ -239,7 +255,13 @@ class SettingsPatch(BaseModel):
     image_provider: str | None = None
     video_provider: str | None = None
     upscale_provider: str | None = None
+    edit_provider: str | None = None
     llm_provider: str | None = None
+    fal_api_key: str | None = None
+    fal_model_image: str | None = None
+    fal_model_edit: str | None = None
+    fal_model_video: str | None = None
+    fal_model_upscale: str | None = None
     comfyui_url: str | None = None
     upscale_model: str | None = None
     workflow_image: str | None = None

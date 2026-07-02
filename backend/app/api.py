@@ -4,22 +4,22 @@ from __future__ import annotations
 import mimetypes
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from . import editops, queue, runtime, storage
+from . import editops, events, queue, runtime, storage
 from .config import get_settings
 from .db import get_db
 from .models import Asset, Character, Edge, GenerationJob, Graph, Node, Project
 from .providers import get_llm_provider
 from .providers import comfyui as comfyui_provider
 from .schemas import (
-    AssetCopyRequest, AssetOut, CharacterIn, CharacterOut, ComfyModels, EditRequest,
-    EdgeIn, EdgeOut, ExpandRequest, GenerateRequest, GraphCreate, GraphInfo, GraphMeta,
-    GraphOut, GraphRename, JobOut, NodeIn, NodeOut, ProjectCreate, ProjectOut,
-    ProjectPatch, ProviderStatus, ScenarioRequest, SettingsOut, SettingsPatch,
-    TestLLMResult, TriageUpdate, WorkflowInfo,
+    AssetCopyRequest, AssetOut, CharacterIn, CharacterOut, ComfyModels, DeriveRequest,
+    EditRequest, EdgeIn, EdgeOut, ExpandRequest, GenerateRequest, GraphCreate,
+    GraphInfo, GraphMeta, GraphOut, GraphRename, JobOut, NodeIn, NodeOut,
+    ProjectCreate, ProjectOut, ProjectPatch, ProviderStatus, ScenarioRequest,
+    SettingsOut, SettingsPatch, TestLLMResult, TriageUpdate, WorkflowInfo,
 )
 
 router = APIRouter(prefix="/api")
@@ -37,7 +37,8 @@ def _enqueue_job(db: Session, project_id: str, target_type: str, target_id: str,
                  kind: str, n: int, params: dict) -> GenerationJob:
     s = get_settings()
     provider = {
-        "image": s.image_provider, "video_loop": s.video_provider,
+        "image": s.image_provider, "image_edit": s.edit_provider,
+        "video_loop": s.video_provider,
         "video_transition": s.video_provider, "upscale": s.upscale_provider,
     }[kind]
     job = GenerationJob(
@@ -50,14 +51,23 @@ def _enqueue_job(db: Session, project_id: str, target_type: str, target_id: str,
     return job
 
 
+# --- events (SSE) ------------------------------------------------------
+@router.get("/events")
+async def sse_events():
+    """Server-sent job events — the UI subscribes instead of polling."""
+    return StreamingResponse(events.stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache"})
+
+
 # --- providers ---------------------------------------------------------
 @router.get("/providers", response_model=ProviderStatus)
 def providers_status():
     s = get_settings()
     return ProviderStatus(
         image=s.image_provider, video=s.video_provider, upscale=s.upscale_provider,
-        llm=s.llm_provider, comfyui_url=s.comfyui_url,
+        edit=s.edit_provider, llm=s.llm_provider, comfyui_url=s.comfyui_url,
         openrouter_configured=bool(s.openrouter_api_key),
+        fal_configured=bool(s.fal_api_key),
     )
 
 
@@ -66,7 +76,11 @@ def _settings_out() -> SettingsOut:
     s = get_settings()
     return SettingsOut(
         image_provider=s.image_provider, video_provider=s.video_provider,
-        upscale_provider=s.upscale_provider, llm_provider=s.llm_provider,
+        upscale_provider=s.upscale_provider, edit_provider=s.edit_provider,
+        llm_provider=s.llm_provider,
+        fal_api_key=s.fal_api_key, fal_model_image=s.fal_model_image,
+        fal_model_edit=s.fal_model_edit, fal_model_video=s.fal_model_video,
+        fal_model_upscale=s.fal_model_upscale,
         comfyui_url=s.comfyui_url, upscale_model=s.upscale_model,
         workflow_image=s.workflow_image, workflow_loop=s.workflow_loop,
         workflow_transition=s.workflow_transition,
@@ -360,6 +374,26 @@ def generate_node(nid: str, body: GenerateRequest, db: Session = Depends(get_db)
     n = _get(db, Node, nid)
     count = body.n or get_settings().default_candidates
     return _enqueue_job(db, n.project_id, "node", nid, "image", count, body.params)
+
+
+@router.post("/nodes/{nid}/derive", response_model=JobOut)
+def derive_node(nid: str, body: DeriveRequest, db: Session = Depends(get_db)):
+    """Derive keyframe candidates by instruction-editing an existing image —
+    the consistency-first alternative to fresh txt2img (e.g. a neighbor node's
+    locked keyframe + "same framing, but eyes closed"). Candidates are
+    lineage-linked to the source asset."""
+    n = _get(db, Node, nid)
+    src = _get(db, Asset, body.source_asset_id)
+    if src.kind != "image":
+        raise HTTPException(400, "derive source must be an image asset")
+    if src.project_id != n.project_id:
+        raise HTTPException(400, "source asset is in a different project")
+    if not body.instruction.strip():
+        raise HTTPException(400, "instruction is required")
+    count = body.n or get_settings().default_candidates
+    params = {**body.params, "source_asset_id": src.id,
+              "instruction": body.instruction}
+    return _enqueue_job(db, n.project_id, "node", nid, "image_edit", count, params)
 
 
 @router.post("/edges/{eid}/generate", response_model=JobOut)
